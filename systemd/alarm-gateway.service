@@ -1,0 +1,27 @@
+[Unit]
+Description=Alarm Gateway (DiVeRa -> ntfy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=alarm-gateway
+Group=alarm-gateway
+
+EnvironmentFile=/etc/alarm-gateway/alarm-gateway.env
+
+WorkingDirectory=/opt/alarm-gateway
+ExecStart=/opt/alarm-gateway/venv/bin/python /opt/alarm-gateway/alarm_gateway.py
+
+Restart=always
+RestartSec=3
+
+# Basic hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/alarm-gateway /opt/alarm-gateway /etc/alarm-gateway
+
+[Install]
+WantedBy=multi-user.target
