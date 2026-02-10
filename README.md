@@ -3,6 +3,13 @@
 Pollt die DiVeRa-API auf neue Alarmierungen und sendet Push-Benachrichtigungen an einen ntfy-Topic.
 Damit bekommst du Push auf Android **ohne** Google Play Services / FCM.
 
+**Zielbild (Selfhosted):**
+- Du betreibst Nextcloud selbst
+- Du nutzt z. B. LineageOS ohne Google-Dienste
+- Du möchtest DiVeRa-Alarmierungen trotzdem als Push auf dem Handy erhalten
+
+Genau dafür ist dieses Projekt gedacht: **DiVeRa → Gateway → UnifiedPush-Distributor (ntfy oder NextPush) → Smartphone**.
+
 Repository:
 https://github.com/dataklo/divera-ntfy-gateway
 
@@ -17,6 +24,47 @@ https://github.com/dataklo/divera-ntfy-gateway
 
 ---
 
+
+## 0) Schnellstart für **blanke LXC** (Proxmox, Debian 12)
+
+Wenn dein Container wirklich „frisch“ ist, geh exakt so vor:
+
+1. Container starten und als `root` einloggen
+2. Basis-Pakete installieren:
+```bash
+apt update
+apt install -y git ca-certificates curl
+```
+3. Repository klonen:
+```bash
+cd /root
+git clone https://github.com/dataklo/divera-ntfy-gateway.git
+cd divera-ntfy-gateway
+```
+4. Installation ausführen:
+```bash
+bash scripts/install.sh
+```
+5. Konfiguration setzen:
+```bash
+nano /etc/alarm-gateway/alarm-gateway.env
+```
+Mindestens diese 3 Werte eintragen:
+- `DIVERA_ACCESSKEY`
+- `NTFY_URL`
+- `NTFY_TOPIC`
+
+6. Dienst neu starten und prüfen:
+```bash
+systemctl restart alarm-gateway
+systemctl status alarm-gateway --no-pager
+journalctl -u alarm-gateway -n 50 --no-pager
+```
+
+Wenn `active (running)` angezeigt wird und keine Fehler im Journal stehen, läuft das Gateway korrekt.
+
+---
+
 ## 1) Installation auf dem Server (Debian/Ubuntu, Proxmox LXC/VM)
 
 ### Voraussetzungen
@@ -24,6 +72,27 @@ https://github.com/dataklo/divera-ntfy-gateway
 - Internetzugang
 - DiVeRa Accesskey
 - Push-Distributor (**ntfy** oder **NextPush**)
+- systemd im Container aktiv (für den `alarm-gateway` Service)
+
+> Tipp für Proxmox-LXC: Debian 12 Template + funktionierendes DNS reichen normalerweise aus.
+
+### Empfohlene Selfhosted-Setups
+
+#### Setup 1: Vollständig selfhosted mit Nextcloud
+- **Server:**
+  - `divera-ntfy-gateway` (dieses Projekt)
+  - Nextcloud mit `uppush` (UnifiedPush Provider)
+- **Smartphone (LineageOS):**
+  - NextPush App (Distributor)
+- **Vorteil:** Alles in deiner eigenen Infrastruktur
+
+#### Setup 2: Selfhosted mit eigenem ntfy
+- **Server:**
+  - `divera-ntfy-gateway`
+  - eigener ntfy-Server
+- **Smartphone (LineageOS):**
+  - ntfy App
+- **Vorteil:** Sehr simpel und robust
 
 ### Repository klonen
 ```bash
@@ -161,6 +230,19 @@ Optional:
 - `STATE_FILE`
 - `NTFY_PRIORITY`
 - `VERIFY_TLS`
+
+---
+
+## 5b) Mini-Checkliste: „Bin ich fertig?“
+
+- `systemctl status alarm-gateway` zeigt **active (running)**
+- in `journalctl -u alarm-gateway -f` erscheinen **keine dauerhaften ERRORs**
+- Testnachricht kommt auf dem Smartphone an:
+```bash
+curl -d "Test vom divera-gateway" https://DEIN-NTFY-SERVER/DEIN-TOPIC
+```
+
+Wenn alle drei Punkte passen, ist die Installation auf einer blanken LXC in der Regel sauber abgeschlossen.
 
 ---
 
