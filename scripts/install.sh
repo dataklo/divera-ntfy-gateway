@@ -42,8 +42,16 @@ if [[ ! -f "$ENV_DIR/alarm-gateway.env" ]]; then
   cat > "$ENV_DIR/alarm-gateway.env" <<'EOF'
 # REQUIRED
 DIVERA_ACCESSKEY="PASTE_YOUR_DIVERA_ACCESSKEY_HERE"
+
+# PUSH TARGET (choose one variant)
+# Variant A: ntfy
 NTFY_URL="https://ntfy.example.com"
 NTFY_TOPIC="fw-alarme-x9k3p"
+
+# Variant B: UnifiedPush endpoint (e.g. Nextcloud uppush)
+# UPPUSH_ENDPOINT="https://nextcloud.example.com/index.php/apps/uppush/push/<endpoint-token>"
+# Optional auth header for endpoint auth:
+# UPPUSH_AUTH_HEADER="Bearer <token>"
 
 # OPTIONAL
 DIVERA_URL="https://divera247.com/api/v2/alarms"

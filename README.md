@@ -49,10 +49,11 @@ bash scripts/install.sh
 ```bash
 nano /etc/alarm-gateway/alarm-gateway.env
 ```
-Mindestens diese 3 Werte eintragen:
+Mindestens diese Werte eintragen:
 - `DIVERA_ACCESSKEY`
-- `NTFY_URL`
-- `NTFY_TOPIC`
+- und **eine** Push-Variante:
+  - `NTFY_URL` + `NTFY_TOPIC` **oder**
+  - `UPPUSH_ENDPOINT`
 
 6. Dienst neu starten und prüfen:
 ```bash
@@ -198,6 +199,37 @@ https://unifiedpush.org/users/distributors/nextpush/
 
 ---
 
+### Schritt-für-Schritt: nur Nextcloud + uppush (ohne ntfy)
+
+Wenn du bereits eine öffentlich erreichbare Nextcloud mit `uppush` hast, gehe so vor:
+
+1. **NextPush auf dem Smartphone installieren** und mit deiner Nextcloud verbinden.
+2. In NextPush einen Push-Endpoint erzeugen/kopieren (URL im Stil `https://<cloud>/index.php/apps/uppush/push/<token>`).
+3. Auf dem Gateway die Env-Datei öffnen:
+```bash
+sudo nano /etc/alarm-gateway/alarm-gateway.env
+```
+4. Nur folgende Push-Werte setzen:
+```env
+DIVERA_ACCESSKEY="DEIN_DIVERA_KEY"
+UPPUSH_ENDPOINT="https://nextcloud.example.com/index.php/apps/uppush/push/<endpoint-token>"
+# optional:
+# UPPUSH_AUTH_HEADER="Bearer <token>"
+```
+5. Falls vorhanden, alte ntfy-Werte auskommentieren/leer lassen (`NTFY_URL`, `NTFY_TOPIC`), damit klar nur uppush genutzt wird.
+6. Dienst neu starten und Logs prüfen:
+```bash
+sudo systemctl restart alarm-gateway
+sudo systemctl status alarm-gateway --no-pager
+sudo journalctl -u alarm-gateway -n 50 --no-pager
+```
+7. Endpoint testen:
+```bash
+curl -X POST -d "Test vom divera-gateway" "https://nextcloud.example.com/index.php/apps/uppush/push/<endpoint-token>"
+```
+
+Wenn der Curl-Test ankommt und der Service dauerhaft `active (running)` bleibt, ist die uppush-only Konfiguration fertig.
+
 ## 4) Brauche ich neben NextPush noch etwas auf dem Smartphone?
 
 **Kurzantwort:** ❌ Nein
@@ -222,14 +254,31 @@ Datei:
 
 Pflicht:
 - `DIVERA_ACCESSKEY`
-- `NTFY_URL`
-- `NTFY_TOPIC`
+- und **eine** Push-Variante:
+  - **Variante ntfy:** `NTFY_URL` + `NTFY_TOPIC`
+  - **Variante uppush/UnifiedPush-Endpoint:** `UPPUSH_ENDPOINT`
 
 Optional:
 - `POLL_SECONDS` (Standard: 20)
 - `STATE_FILE`
 - `NTFY_PRIORITY`
+- `UPPUSH_AUTH_HEADER` (optional `Authorization` Header für Endpoint-Auth)
 - `VERIFY_TLS`
+
+### Beispiel A: ntfy
+```env
+DIVERA_ACCESSKEY="DEIN_DIVERA_KEY"
+NTFY_URL="https://ntfy.sh"
+NTFY_TOPIC="dein-zufaelliger-topic"
+```
+
+### Beispiel B: Nextcloud/uppush
+```env
+DIVERA_ACCESSKEY="DEIN_DIVERA_KEY"
+UPPUSH_ENDPOINT="https://nextcloud.example.com/index.php/apps/uppush/push/<dein-endpoint-token>"
+# Optional, falls dein Endpoint Auth verlangt:
+# UPPUSH_AUTH_HEADER="Bearer <token>"
+```
 
 ---
 
@@ -239,7 +288,11 @@ Optional:
 - in `journalctl -u alarm-gateway -f` erscheinen **keine dauerhaften ERRORs**
 - Testnachricht kommt auf dem Smartphone an:
 ```bash
+# ntfy
 curl -d "Test vom divera-gateway" https://DEIN-NTFY-SERVER/DEIN-TOPIC
+
+# uppush endpoint
+curl -X POST -d "Test vom divera-gateway" "https://nextcloud.example.com/index.php/apps/uppush/push/<endpoint-token>"
 ```
 
 Wenn alle drei Punkte passen, ist die Installation auf einer blanken LXC in der Regel sauber abgeschlossen.
@@ -249,7 +302,9 @@ Wenn alle drei Punkte passen, ist die Installation auf einer blanken LXC in der 
 ## 6) Troubleshooting
 
 ### Keine Pushs
-- Teste ntfy manuell (`curl -d test ...`)
+- Teste den Push-Zielpfad manuell (`curl -d test ...`)
+  - ntfy: `curl -d test https://DEIN-NTFY-SERVER/DEIN-TOPIC`
+  - uppush endpoint: `curl -X POST -d test https://.../apps/uppush/push/<endpoint-token>`
 - Logs prüfen: `journalctl -u alarm-gateway -f`
 - API testen:
 ```bash

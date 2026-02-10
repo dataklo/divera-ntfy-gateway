@@ -1,5 +1,5 @@
 [Unit]
-Description=Alarm Gateway (DiVeRa -> ntfy)
+Description=Alarm Gateway (DiVeRa -> ntfy/uppush)
 After=network-online.target
 Wants=network-online.target
 
