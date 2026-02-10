@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-DiVeRa -> Polling -> Push (UnifiedPush compatible via ntfy)
+DiVeRa -> Polling -> Push (UnifiedPush compatible via ntfy/uppush endpoint)
 
 This service polls the DiVeRa API for new (non-archived) alarms and sends a push
-notification through an ntfy topic. This works without Google Play Services/FCM.
+notification through either an ntfy topic or a generic UnifiedPush endpoint URL.
+This works without Google Play Services/FCM.
 
 Config is done via environment variables (see .env.example). In the recommended
 systemd setup, env vars are stored in /etc/alarm-gateway/alarm-gateway.env.
@@ -33,12 +34,20 @@ DIVERA_ACCESSKEY = env("DIVERA_ACCESSKEY", required=True)
 POLL_SECONDS = int(env("POLL_SECONDS", "20"))
 STATE_FILE = env("STATE_FILE", "/var/lib/alarm-gateway/state.json")
 
-NTFY_URL = env("NTFY_URL", required=True).rstrip("/")
-NTFY_TOPIC = env("NTFY_TOPIC", required=True)
+NTFY_URL = env("NTFY_URL", "").rstrip("/")
+NTFY_TOPIC = env("NTFY_TOPIC", "")
 NTFY_PRIORITY = env("NTFY_PRIORITY", "5")
+
+UPPUSH_ENDPOINT = env("UPPUSH_ENDPOINT", "")
+UPPUSH_AUTH_HEADER = env("UPPUSH_AUTH_HEADER", "")
 
 REQUEST_TIMEOUT = float(env("REQUEST_TIMEOUT", "15"))
 VERIFY_TLS = env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
+
+if not UPPUSH_ENDPOINT and (not NTFY_URL or not NTFY_TOPIC):
+    raise SystemExit(
+        "Missing push target: either set UPPUSH_ENDPOINT or set both NTFY_URL and NTFY_TOPIC"
+    )
 
 
 def load_state(path: str) -> Dict[str, Any]:
@@ -137,6 +146,20 @@ def ntfy_publish(title: str, message: str) -> None:
     ).raise_for_status()
 
 
+def uppush_publish(title: str, message: str) -> None:
+    headers = {"Content-Type": "text/plain; charset=utf-8"}
+    if UPPUSH_AUTH_HEADER:
+        headers["Authorization"] = UPPUSH_AUTH_HEADER
+    payload = f"{title}\n{message}".encode("utf-8")
+    requests.post(
+        UPPUSH_ENDPOINT,
+        data=payload,
+        headers=headers,
+        timeout=REQUEST_TIMEOUT,
+        verify=VERIFY_TLS,
+    ).raise_for_status()
+
+
 def fetch_alarms() -> Any:
     r = requests.get(
         DIVERA_URL,
@@ -159,7 +182,10 @@ def main() -> None:
                 fp = fingerprint(latest)
                 if fp != state.get("last_fingerprint"):
                     title, msg = format_alarm(latest)
-                    ntfy_publish(title, msg)
+                    if UPPUSH_ENDPOINT:
+                        uppush_publish(title, msg)
+                    else:
+                        ntfy_publish(title, msg)
                     state["last_fingerprint"] = fp
                     save_state(STATE_FILE, state)
         except Exception as e:
