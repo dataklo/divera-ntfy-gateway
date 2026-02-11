@@ -11,6 +11,7 @@ systemd setup, env vars are stored in /etc/alarm-gateway/alarm-gateway.env.
 """
 
 import hashlib
+import argparse
 import json
 import os
 import time
@@ -29,7 +30,7 @@ def env(name: str, default: Optional[str] = None, required: bool = False) -> str
 
 
 DIVERA_URL = env("DIVERA_URL", DIVERA_URL_DEFAULT)
-DIVERA_ACCESSKEY = env("DIVERA_ACCESSKEY", required=True)
+DIVERA_ACCESSKEY = env("DIVERA_ACCESSKEY", "")
 
 POLL_SECONDS = int(env("POLL_SECONDS", "20"))
 STATE_FILE = env("STATE_FILE", "/var/lib/alarm-gateway/state.json")
@@ -43,6 +44,21 @@ UPPUSH_AUTH_HEADER = env("UPPUSH_AUTH_HEADER", "")
 
 REQUEST_TIMEOUT = float(env("REQUEST_TIMEOUT", "15"))
 VERIFY_TLS = env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
+
+SHELLY_UNI_URL = env("SHELLY_UNI_URL", "").rstrip("/")
+SHELLY_INPUT_IDS = [
+    int(x.strip())
+    for x in env("SHELLY_INPUT_IDS", "0,1").split(",")
+    if x.strip()
+]
+SHELLY_POLL_SECONDS = float(env("SHELLY_POLL_SECONDS", "1"))
+SHELLY_TRIGGER_ON = env("SHELLY_TRIGGER_ON", "1").lower() not in ("0", "false", "no")
+SHELLY_DEBOUNCE_SECONDS = float(env("SHELLY_DEBOUNCE_SECONDS", "10"))
+SHELLY_TITLE_TEMPLATE = env("SHELLY_TITLE_TEMPLATE", "Shelly Input {input_id}")
+SHELLY_MESSAGE_TEMPLATE = env(
+    "SHELLY_MESSAGE_TEMPLATE",
+    "Shelly Plus Uni Eingang {input_id} wurde ausgelöst.",
+)
 
 if not UPPUSH_ENDPOINT and (not NTFY_URL or not NTFY_TOPIC):
     raise SystemExit(
@@ -161,6 +177,8 @@ def uppush_publish(title: str, message: str) -> None:
 
 
 def fetch_alarms() -> Any:
+    if not DIVERA_ACCESSKEY:
+        raise RuntimeError("DIVERA_ACCESSKEY is empty (required for DiVeRa polling)")
     r = requests.get(
         DIVERA_URL,
         params={"accesskey": DIVERA_ACCESSKEY},
@@ -171,26 +189,163 @@ def fetch_alarms() -> Any:
     return r.json()
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--test-push",
+        action="store_true",
+        help="Send one test push and exit",
+    )
+    parser.add_argument(
+        "--test-alarm-json",
+        default="",
+        help="Raw JSON object to build the test alarm payload",
+    )
+    parser.add_argument("--test-title", default="")
+    parser.add_argument("--test-text", default="")
+    parser.add_argument("--test-address", default="")
+    parser.add_argument("--test-url", default="")
+    parser.add_argument("--test-id", default="")
+    parser.add_argument("--test-date", default="")
+    parser.add_argument(
+        "--test-field",
+        action="append",
+        default=[],
+        help="Additional alarm field in key=value syntax (repeatable)",
+    )
+    return parser.parse_args()
+
+
+def build_test_alarm(args: argparse.Namespace) -> Dict[str, Any]:
+    alarm: Dict[str, Any] = {}
+    if args.test_alarm_json:
+        parsed = json.loads(args.test_alarm_json)
+        if not isinstance(parsed, dict):
+            raise ValueError("--test-alarm-json must be a JSON object")
+        alarm.update(parsed)
+
+    direct_fields = {
+        "title": args.test_title,
+        "text": args.test_text,
+        "address": args.test_address,
+        "url": args.test_url,
+        "id": args.test_id,
+        "date": args.test_date,
+    }
+    for k, v in direct_fields.items():
+        if v:
+            alarm[k] = v
+
+    for raw in args.test_field:
+        if "=" not in raw:
+            raise ValueError(f"Invalid --test-field '{raw}' (expected key=value)")
+        k, v = raw.split("=", 1)
+        if not k.strip():
+            raise ValueError(f"Invalid --test-field '{raw}' (empty key)")
+        alarm[k.strip()] = v
+
+    return alarm
+
+
+def publish_message(title: str, message: str) -> None:
+    if UPPUSH_ENDPOINT:
+        uppush_publish(title, message)
+    else:
+        ntfy_publish(title, message)
+
+
+def run_test_push(args: argparse.Namespace) -> None:
+    alarm = build_test_alarm(args)
+    title, msg = format_alarm(alarm)
+    publish_message(title, msg)
+    print("Test push sent.")
+
+
+def fetch_shelly_input_state(input_id: int) -> Optional[bool]:
+    if not SHELLY_UNI_URL:
+        return None
+    r = requests.get(
+        f"{SHELLY_UNI_URL}/rpc/Input.GetStatus",
+        params={"id": input_id},
+        timeout=REQUEST_TIMEOUT,
+        verify=VERIFY_TLS,
+    )
+    r.raise_for_status()
+    data = r.json()
+    val = data.get("state")
+    if isinstance(val, bool):
+        return val
+    return None
+
+
+def handle_divera_poll(state: Dict[str, Any]) -> None:
+    data = fetch_alarms()
+    alarms = get_alarms_list(data)
+    latest = pick_latest_alarm(alarms)
+    if latest:
+        fp = fingerprint(latest)
+        if fp != state.get("last_fingerprint"):
+            title, msg = format_alarm(latest)
+            publish_message(title, msg)
+            state["last_fingerprint"] = fp
+            save_state(STATE_FILE, state)
+
+
+def handle_shelly_poll(state: Dict[str, Any]) -> None:
+    if not SHELLY_UNI_URL:
+        return
+    previous: Dict[str, bool] = state.setdefault("shelly_inputs", {})
+    now = time.time()
+    for input_id in SHELLY_INPUT_IDS:
+        current = fetch_shelly_input_state(input_id)
+        if current is None:
+            continue
+
+        key = str(input_id)
+        old = previous.get(key)
+        previous[key] = current
+
+        if old is None:
+            continue
+
+        rising_edge = (not old) and current
+        falling_edge = old and (not current)
+        should_trigger = rising_edge if SHELLY_TRIGGER_ON else falling_edge
+        if not should_trigger:
+            continue
+
+        last_ts = float(state.get("shelly_last_trigger_ts", 0.0))
+        if now - last_ts < SHELLY_DEBOUNCE_SECONDS:
+            continue
+
+        title = SHELLY_TITLE_TEMPLATE.format(input_id=input_id, state=current)
+        message = SHELLY_MESSAGE_TEMPLATE.format(input_id=input_id, state=current)
+        publish_message(title, message)
+        state["shelly_last_trigger_ts"] = now
+        save_state(STATE_FILE, state)
+
+
 def main() -> None:
+    args = parse_args()
+    if args.test_push:
+        run_test_push(args)
+        return
+
     state = load_state(STATE_FILE)
+    next_divera = 0.0
+    next_shelly = 0.0
     while True:
         try:
-            data = fetch_alarms()
-            alarms = get_alarms_list(data)
-            latest = pick_latest_alarm(alarms)
-            if latest:
-                fp = fingerprint(latest)
-                if fp != state.get("last_fingerprint"):
-                    title, msg = format_alarm(latest)
-                    if UPPUSH_ENDPOINT:
-                        uppush_publish(title, msg)
-                    else:
-                        ntfy_publish(title, msg)
-                    state["last_fingerprint"] = fp
-                    save_state(STATE_FILE, state)
+            mono_now = time.monotonic()
+            if DIVERA_ACCESSKEY and mono_now >= next_divera:
+                handle_divera_poll(state)
+                next_divera = mono_now + POLL_SECONDS
+            if SHELLY_UNI_URL and mono_now >= next_shelly:
+                handle_shelly_poll(state)
+                next_shelly = mono_now + SHELLY_POLL_SECONDS
         except Exception as e:
             print(f"ERROR: {e}")
-        time.sleep(POLL_SECONDS)
+        time.sleep(0.2)
 
 
 if __name__ == "__main__":

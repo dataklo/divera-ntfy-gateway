@@ -264,6 +264,13 @@ Optional:
 - `NTFY_PRIORITY`
 - `UPPUSH_AUTH_HEADER` (optional `Authorization` Header für Endpoint-Auth)
 - `VERIFY_TLS`
+- `SHELLY_UNI_URL` (optional: Shelly Plus Uni für Input-Polling)
+- `SHELLY_INPUT_IDS` (Standard: `0,1`)
+- `SHELLY_POLL_SECONDS` (Standard: `1`)
+- `SHELLY_TRIGGER_ON` (`true` = Rising Edge, `false` = Falling Edge)
+- `SHELLY_DEBOUNCE_SECONDS` (Standard: `10`)
+- `SHELLY_TITLE_TEMPLATE`
+- `SHELLY_MESSAGE_TEMPLATE`
 
 ### Beispiel A: ntfy
 ```env
@@ -278,6 +285,51 @@ DIVERA_ACCESSKEY="DEIN_DIVERA_KEY"
 UPPUSH_ENDPOINT="https://nextcloud.example.com/index.php/apps/uppush/push/<dein-endpoint-token>"
 # Optional, falls dein Endpoint Auth verlangt:
 # UPPUSH_AUTH_HEADER="Bearer <token>"
+```
+
+### Beispiel C: Shelly Plus Uni Input-Trigger
+```env
+# zusätzlich zu Divera + Push-Ziel
+SHELLY_UNI_URL="http://192.168.1.50"
+SHELLY_INPUT_IDS="0,1"
+SHELLY_POLL_SECONDS="1"
+SHELLY_TRIGGER_ON="true"
+SHELLY_DEBOUNCE_SECONDS="10"
+SHELLY_TITLE_TEMPLATE="Shelly Input {input_id}"
+SHELLY_MESSAGE_TEMPLATE="Shelly Plus Uni Eingang {input_id} wurde ausgelöst."
+```
+
+---
+
+## 5a) Manuelle Test-Pushs über das Gateway
+
+Du kannst eine Test-Push direkt über das Gateway senden, ohne auf einen echten DiVeRa-Alarm zu warten:
+
+```bash
+cd /opt/alarm-gateway
+source venv/bin/activate
+python3 alarm_gateway.py --test-push --test-title "Probealarm" --test-text "Testtext"
+```
+
+Zusätzlich können beliebige Alarm-Felder gesetzt werden (z. B. wie bei DiVeRa):
+
+```bash
+python3 alarm_gateway.py --test-push \
+  --test-title "B3 - Brand" \
+  --test-text "Ausgelöst über Testfunktion" \
+  --test-address "Musterstraße 12" \
+  --test-url "https://example.org/alarm/123" \
+  --test-id "123" \
+  --test-date "2026-02-11T12:34:00+01:00" \
+  --test-field stichwort=B3 \
+  --test-field ort=Berlin \
+  --test-field note="Freitext"
+```
+
+Alternativ kannst du ein komplettes JSON-Objekt übergeben:
+
+```bash
+python3 alarm_gateway.py --test-push --test-alarm-json '{"title":"Probealarm","address":"Musterweg 1","text":"JSON Test"}'
 ```
 
 ---
