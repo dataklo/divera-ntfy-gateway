@@ -15,7 +15,7 @@ import json
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests
 
@@ -90,6 +90,7 @@ NTFY_AUTH_TOKEN = env("NTFY_AUTH_TOKEN", "")
 
 REQUEST_TIMEOUT = float(env("REQUEST_TIMEOUT", "15"))
 VERIFY_TLS = env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
+DEBUG_DIVERA = env("DEBUG_DIVERA", "false").lower() in ("1", "true", "yes", "on")
 
 SHELLY_UNI_URL = env("SHELLY_UNI_URL", "").rstrip("/")
 SHELLY_INPUT_IDS = [
@@ -105,6 +106,11 @@ SHELLY_MESSAGE_TEMPLATE = env(
     "SHELLY_MESSAGE_TEMPLATE",
     "Shelly Plus Uni Eingang {input_id} wurde ausgelöst.",
 )
+
+
+def debug_log(message: str) -> None:
+    if DEBUG_DIVERA:
+        print(f"[debug] {message}")
 
 
 def validate_push_target() -> None:
@@ -142,6 +148,8 @@ def safe_get(alarm: Dict[str, Any], keys: List[str]) -> str:
     for k in keys:
         v = alarm.get(k)
         if v is None:
+            v = _get_case_insensitive(alarm, k)
+        if v is None:
             continue
         if isinstance(v, (dict, list)):
             continue
@@ -174,10 +182,12 @@ def _looks_like_alarm_entry(value: Any) -> bool:
         return False
 
     marker_keys = {
-        "id", "alarm_id", "alarmId", "title", "text", "date", "ts_create",
-        "ts_update", "address", "closed", "deleted",
+        "id", "alarm_id", "alarmid", "title", "text", "date", "ts_create",
+        "ts_update", "address", "closed", "deleted", "stichwort", "einsatzstichwort",
+        "adresse", "ort", "status",
     }
-    return any(key in value for key in marker_keys)
+    normalized_keys = {str(k).lower() for k in value.keys()}
+    return any(key in normalized_keys for key in marker_keys)
 
 
 def _coerce_alarm_items_map(items: Any, sorting: Any = None) -> List[Dict[str, Any]]:
@@ -208,6 +218,13 @@ def _coerce_alarm_collection(value: Any, sorting: Any = None) -> List[Dict[str, 
     return []
 
 
+def _get_case_insensitive(mapping: Dict[str, Any], key: str) -> Any:
+    for existing_key, value in mapping.items():
+        if isinstance(existing_key, str) and existing_key.lower() == key.lower():
+            return value
+    return None
+
+
 def _alarms_from_alarm_section(section: Any) -> List[Dict[str, Any]]:
     if isinstance(section, list):
         return _coerce_alarm_collection(section)
@@ -215,10 +232,51 @@ def _alarms_from_alarm_section(section: Any) -> List[Dict[str, Any]]:
     if not isinstance(section, dict):
         return []
 
-    if "items" in section:
-        return _coerce_alarm_collection(section.get("items"), section.get("sorting"))
+    items = _get_case_insensitive(section, "items")
+    if items is not None:
+        sorting = _get_case_insensitive(section, "sorting")
+        return _coerce_alarm_collection(items, sorting)
 
     return _coerce_alarm_collection(section)
+
+
+def _collect_alarms_deep(value: Any, seen: Optional[Set[int]] = None) -> List[Dict[str, Any]]:
+    if seen is None:
+        seen = set()
+
+    if isinstance(value, dict):
+        value_id = id(value)
+        if value_id in seen:
+            return []
+        seen.add(value_id)
+
+        collected: List[Dict[str, Any]] = []
+
+        direct = _coerce_alarm_collection(value)
+        if direct:
+            collected.extend(direct)
+
+        alarm_section = _get_case_insensitive(value, "alarm")
+        if alarm_section is not None:
+            collected.extend(_alarms_from_alarm_section(alarm_section))
+
+        items = _get_case_insensitive(value, "items")
+        if items is not None:
+            sorting = _get_case_insensitive(value, "sorting")
+            collected.extend(_coerce_alarm_items_map(items, sorting))
+
+        for nested in value.values():
+            collected.extend(_collect_alarms_deep(nested, seen))
+
+        return collected
+
+    if isinstance(value, list):
+        collected: List[Dict[str, Any]] = []
+        for item in value:
+            collected.extend(_collect_alarms_deep(item, seen))
+        return collected
+
+    return []
 
 
 def get_alarms_list(data: Any) -> List[Dict[str, Any]]:
@@ -229,27 +287,37 @@ def get_alarms_list(data: Any) -> List[Dict[str, Any]]:
         return []
 
     for key in ("alarms", "result"):
-        alarms = _coerce_alarm_collection(data.get(key))
+        alarms = _coerce_alarm_collection(_get_case_insensitive(data, key))
         if alarms:
             return alarms
 
-    root_data = data.get("data")
+    root_data = _get_case_insensitive(data, "data")
     if isinstance(root_data, list):
         alarms = _coerce_alarm_collection(root_data)
         if alarms:
             return alarms
     elif isinstance(root_data, dict):
-        alarms = _alarms_from_alarm_section(root_data.get("alarm"))
+        alarms = _alarms_from_alarm_section(_get_case_insensitive(root_data, "alarm"))
         if alarms:
             return alarms
 
-    alarms = _alarms_from_alarm_section(data.get("alarm"))
+    alarms = _alarms_from_alarm_section(_get_case_insensitive(data, "alarm"))
     if alarms:
         return alarms
 
-    alarms = _coerce_alarm_items_map(data.get("items"), data.get("sorting"))
+    alarms = _coerce_alarm_items_map(
+        _get_case_insensitive(data, "items"),
+        _get_case_insensitive(data, "sorting"),
+    )
     if alarms:
         return alarms
+
+    alarms = _collect_alarms_deep(data)
+    if alarms:
+        deduplicated: Dict[str, Dict[str, Any]] = {}
+        for alarm in alarms:
+            deduplicated[fingerprint(alarm)] = alarm
+        return list(deduplicated.values())
 
     return []
 
@@ -275,7 +343,7 @@ def _parse_sort_value(value: Any) -> Optional[int]:
 
 def _alarm_sort_key(alarm: Dict[str, Any], fallback_index: int) -> Tuple[int, int]:
     for key in ("ts_update", "ts_create", "date", "time", "created_at", "createdAt", "id"):
-        parsed = _parse_sort_value(alarm.get(key))
+        parsed = _parse_sort_value(safe_get(alarm, [key]))
         if parsed is not None:
             return (1, parsed)
     return (0, fallback_index)
@@ -365,7 +433,9 @@ def fetch_alarms() -> Any:
                 verify=VERIFY_TLS,
             )
             r.raise_for_status()
-            return r.json()
+            payload = r.json()
+            debug_log(f"DiVeRa API OK via {url}; top-level type={type(payload).__name__}")
+            return payload
         except Exception as e:
             errors.append(f"{url}: {e}")
 
@@ -437,6 +507,10 @@ def run_divera_alarm_check(output_json: bool) -> int:
     latest = pick_latest_alarm(alarms)
 
     if not latest:
+        if isinstance(data, dict):
+            debug_log("Keine Alarme erkannt; Top-Level-Keys: " + ", ".join([str(k) for k in list(data.keys())[:20]]))
+        elif isinstance(data, list):
+            debug_log(f"Keine Alarme erkannt; API lieferte Liste mit {len(data)} Elementen")
         print("DiVeRa check: kein aktiver Alarm gefunden.")
         return 1
 
@@ -469,6 +543,7 @@ def fetch_shelly_input_state(input_id: int) -> Optional[bool]:
 def handle_divera_poll(state: Dict[str, Any]) -> None:
     data = fetch_alarms()
     alarms = sort_alarms_oldest_first(get_alarms_list(data))
+    debug_log(f"DiVeRa Poll: {len(alarms)} Alarm(e) erkannt")
 
     prev_active = set(state.get("active_fingerprints", []))
     recent = [x for x in state.get("recent_fingerprints", []) if isinstance(x, str)]
