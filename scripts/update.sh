@@ -14,6 +14,12 @@ rsync -a --delete \
   "$REPO_ROOT/" "$APP_DIR/"
 
 echo "[*] Updating python dependencies..."
+
+if [[ ! -x "$APP_DIR/venv/bin/pip" ]]; then
+  echo "[!] Python virtualenv missing in $APP_DIR/venv - creating it..."
+  python3 -m venv "$APP_DIR/venv"
+fi
+
 "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
 
 echo "[*] Updating systemd unit..."
@@ -24,3 +30,11 @@ systemctl daemon-reload
 systemctl restart alarm-gateway
 
 echo "[✓] Update complete. Logs: journalctl -u alarm-gateway -f"
+
+
+echo "[*] Checking DiVeRa alarm status..."
+if "$APP_DIR/venv/bin/python" "$APP_DIR/alarm_gateway.py" --check-divera-alarm; then
+  echo "[✓] DiVeRa check: mind. ein aktiver Alarm vorhanden."
+else
+  echo "[i] DiVeRa check: kein aktiver Alarm gefunden oder API nicht erreichbar."
+fi

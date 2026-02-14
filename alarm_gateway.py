@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """
-DiVeRa -> Polling -> Push (UnifiedPush compatible via ntfy/uppush endpoint)
+DiVeRa -> Polling -> Push (ntfy)
 
 This service polls the DiVeRa API for new (non-archived) alarms and sends a push
-notification through either an ntfy topic or a generic UnifiedPush endpoint URL.
-This works without Google Play Services/FCM.
+notification to an ntfy topic.
 
 Config is done via environment variables (see .env.example). In the recommended
 systemd setup, env vars are stored in /etc/alarm-gateway/alarm-gateway.env.
 """
 
-import hashlib
 import argparse
+import hashlib
 import json
 import os
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 
 DIVERA_URL_DEFAULT = "https://divera247.com/api/v2/alarms"
+
 
 def env(name: str, default: Optional[str] = None, required: bool = False) -> str:
     val = os.environ.get(name, default)
@@ -30,6 +31,7 @@ def env(name: str, default: Optional[str] = None, required: bool = False) -> str
 
 
 DIVERA_URL = env("DIVERA_URL", DIVERA_URL_DEFAULT)
+DIVERA_FALLBACK_URL = env("DIVERA_FALLBACK_URL", "https://app.divera247.com/api/v2/pull/all")
 DIVERA_ACCESSKEY = env("DIVERA_ACCESSKEY", "")
 
 POLL_SECONDS = int(env("POLL_SECONDS", "20"))
@@ -38,9 +40,7 @@ STATE_FILE = env("STATE_FILE", "/var/lib/alarm-gateway/state.json")
 NTFY_URL = env("NTFY_URL", "").rstrip("/")
 NTFY_TOPIC = env("NTFY_TOPIC", "")
 NTFY_PRIORITY = env("NTFY_PRIORITY", "5")
-
-UPPUSH_ENDPOINT = env("UPPUSH_ENDPOINT", "")
-UPPUSH_AUTH_HEADER = env("UPPUSH_AUTH_HEADER", "")
+NTFY_AUTH_TOKEN = env("NTFY_AUTH_TOKEN", "")
 
 REQUEST_TIMEOUT = float(env("REQUEST_TIMEOUT", "15"))
 VERIFY_TLS = env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
@@ -60,21 +60,28 @@ SHELLY_MESSAGE_TEMPLATE = env(
     "Shelly Plus Uni Eingang {input_id} wurde ausgelöst.",
 )
 
-if not UPPUSH_ENDPOINT and (not NTFY_URL or not NTFY_TOPIC):
-    raise SystemExit(
-        "Missing push target: either set UPPUSH_ENDPOINT or set both NTFY_URL and NTFY_TOPIC"
-    )
+
+def validate_push_target() -> None:
+    if not NTFY_URL or not NTFY_TOPIC:
+        raise SystemExit("Missing push target: set both NTFY_URL and NTFY_TOPIC")
 
 
 def load_state(path: str) -> Dict[str, Any]:
+    default_state = {
+        "last_fingerprint": None,
+        "active_fingerprints": [],
+        "recent_fingerprints": [],
+    }
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            loaded = json.load(f)
+            if isinstance(loaded, dict):
+                default_state.update(loaded)
+            return default_state
     except FileNotFoundError:
-        return {"last_fingerprint": None}
+        return default_state
     except Exception:
-        # corrupted state file -> start fresh
-        return {"last_fingerprint": None}
+        return default_state
 
 
 def save_state(path: str, state: Dict[str, Any]) -> None:
@@ -115,32 +122,25 @@ def _coerce_alarm_items_map(items: Any, sorting: Any = None) -> List[Dict[str, A
 
 
 def get_alarms_list(data: Any) -> List[Dict[str, Any]]:
-    # DiVeRa responses can differ depending on endpoint; handle common cases.
     if isinstance(data, list):
         return [a for a in data if isinstance(a, dict)]
 
     if not isinstance(data, dict):
         return []
 
-    # Legacy/common direct list payloads.
     for k in ("alarms", "data", "items", "result"):
         v = data.get(k)
         if isinstance(v, list):
             return [a for a in v if isinstance(a, dict)]
 
-    # pull/all style payload: data -> alarm -> items (+ optional sorting list).
     root_data = data.get("data")
     if isinstance(root_data, dict):
         alarm_section = root_data.get("alarm")
         if isinstance(alarm_section, dict):
-            alarms = _coerce_alarm_items_map(
-                alarm_section.get("items"),
-                alarm_section.get("sorting"),
-            )
+            alarms = _coerce_alarm_items_map(alarm_section.get("items"), alarm_section.get("sorting"))
             if alarms:
                 return alarms
 
-    # Generic nested fallback if caller points directly at an alarm section.
     alarms = _coerce_alarm_items_map(data.get("items"), data.get("sorting"))
     if alarms:
         return alarms
@@ -148,27 +148,44 @@ def get_alarms_list(data: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _parse_sort_value(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        if raw.isdigit():
+            return int(raw)
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return int(dt.timestamp())
+        except ValueError:
+            return None
+    return None
+
+
+def _alarm_sort_key(alarm: Dict[str, Any], fallback_index: int) -> Tuple[int, int]:
+    for key in ("ts_update", "ts_create", "date", "time", "created_at", "createdAt", "id"):
+        parsed = _parse_sort_value(alarm.get(key))
+        if parsed is not None:
+            return (1, parsed)
+    return (0, fallback_index)
+
+
 def pick_latest_alarm(alarms: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not alarms:
         return None
+    keyed = [(_alarm_sort_key(a, idx), a) for idx, a in enumerate(alarms)]
+    return max(keyed, key=lambda x: x[0])[1]
 
-    # If a sortable timestamp exists, prefer the newest alarm deterministically.
-    candidates: List[Tuple[int, Dict[str, Any]]] = []
-    for alarm in alarms:
-        for key in ("ts_update", "ts_create", "date", "id"):
-            value = alarm.get(key)
-            if isinstance(value, int):
-                candidates.append((value, alarm))
-                break
-            if isinstance(value, str) and value.isdigit():
-                candidates.append((int(value), alarm))
-                break
 
-    if candidates:
-        return max(candidates, key=lambda x: x[0])[1]
-
-    # Fallback: first item in already-sorted payload.
-    return alarms[0]
+def sort_alarms_oldest_first(alarms: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    keyed = [(_alarm_sort_key(a, idx), a) for idx, a in enumerate(alarms)]
+    keyed.sort(key=lambda x: x[0])
+    return [a for _, a in keyed]
 
 
 def fingerprint(alarm: Dict[str, Any]) -> str:
@@ -206,24 +223,12 @@ def format_alarm(alarm: Dict[str, Any]) -> Tuple[str, str]:
 
 
 def ntfy_publish(title: str, message: str) -> None:
-    # ntfy supports Title/Priority headers and can be used as UnifiedPush distributor.
+    headers = {"Title": title, "Priority": NTFY_PRIORITY}
+    if NTFY_AUTH_TOKEN:
+        headers["Authorization"] = f"Bearer {NTFY_AUTH_TOKEN}"
     requests.post(
         f"{NTFY_URL}/{NTFY_TOPIC}",
         data=message.encode("utf-8"),
-        headers={"Title": title, "Priority": NTFY_PRIORITY},
-        timeout=REQUEST_TIMEOUT,
-        verify=VERIFY_TLS,
-    ).raise_for_status()
-
-
-def uppush_publish(title: str, message: str) -> None:
-    headers = {"Content-Type": "text/plain; charset=utf-8"}
-    if UPPUSH_AUTH_HEADER:
-        headers["Authorization"] = UPPUSH_AUTH_HEADER
-    payload = f"{title}\n{message}".encode("utf-8")
-    requests.post(
-        UPPUSH_ENDPOINT,
-        data=payload,
         headers=headers,
         timeout=REQUEST_TIMEOUT,
         verify=VERIFY_TLS,
@@ -233,40 +238,41 @@ def uppush_publish(title: str, message: str) -> None:
 def fetch_alarms() -> Any:
     if not DIVERA_ACCESSKEY:
         raise RuntimeError("DIVERA_ACCESSKEY is empty (required for DiVeRa polling)")
-    r = requests.get(
-        DIVERA_URL,
-        params={"accesskey": DIVERA_ACCESSKEY},
-        timeout=REQUEST_TIMEOUT,
-        verify=VERIFY_TLS,
-    )
-    r.raise_for_status()
-    return r.json()
+
+    urls = [DIVERA_URL]
+    if DIVERA_FALLBACK_URL and DIVERA_FALLBACK_URL not in urls:
+        urls.append(DIVERA_FALLBACK_URL)
+
+    errors: List[str] = []
+    for url in urls:
+        try:
+            r = requests.get(
+                url,
+                params={"accesskey": DIVERA_ACCESSKEY},
+                timeout=REQUEST_TIMEOUT,
+                verify=VERIFY_TLS,
+            )
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            errors.append(f"{url}: {e}")
+
+    raise RuntimeError("DiVeRa API request failed on all configured URLs: " + " | ".join(errors))
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--test-push",
-        action="store_true",
-        help="Send one test push and exit",
-    )
-    parser.add_argument(
-        "--test-alarm-json",
-        default="",
-        help="Raw JSON object to build the test alarm payload",
-    )
+    parser.add_argument("--check-divera-alarm", action="store_true", help="Query DiVeRa once, print whether alarms are present, then exit")
+    parser.add_argument("--check-json", action="store_true", help="With --check-divera-alarm: output matching alarm details as JSON")
+    parser.add_argument("--test-push", action="store_true", help="Send one test push and exit")
+    parser.add_argument("--test-alarm-json", default="", help="Raw JSON object to build the test alarm payload")
     parser.add_argument("--test-title", default="")
     parser.add_argument("--test-text", default="")
     parser.add_argument("--test-address", default="")
     parser.add_argument("--test-url", default="")
     parser.add_argument("--test-id", default="")
     parser.add_argument("--test-date", default="")
-    parser.add_argument(
-        "--test-field",
-        action="append",
-        default=[],
-        help="Additional alarm field in key=value syntax (repeatable)",
-    )
+    parser.add_argument("--test-field", action="append", default=[], help="Additional alarm field in key=value syntax (repeatable)")
     return parser.parse_args()
 
 
@@ -302,17 +308,33 @@ def build_test_alarm(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 def publish_message(title: str, message: str) -> None:
-    if UPPUSH_ENDPOINT:
-        uppush_publish(title, message)
-    else:
-        ntfy_publish(title, message)
+    ntfy_publish(title, message)
 
 
 def run_test_push(args: argparse.Namespace) -> None:
+    validate_push_target()
     alarm = build_test_alarm(args)
     title, msg = format_alarm(alarm)
     publish_message(title, msg)
     print("Test push sent.")
+
+
+def run_divera_alarm_check(output_json: bool) -> int:
+    data = fetch_alarms()
+    alarms = get_alarms_list(data)
+    latest = pick_latest_alarm(alarms)
+
+    if not latest:
+        print("DiVeRa check: kein aktiver Alarm gefunden.")
+        return 1
+
+    title, msg = format_alarm(latest)
+    print("DiVeRa check: aktiver Alarm gefunden.")
+    print(f"Titel: {title}")
+    print(f"Details: {msg}")
+    if output_json:
+        print(json.dumps(latest, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
 
 
 def fetch_shelly_input_state(input_id: int) -> Optional[bool]:
@@ -334,15 +356,35 @@ def fetch_shelly_input_state(input_id: int) -> Optional[bool]:
 
 def handle_divera_poll(state: Dict[str, Any]) -> None:
     data = fetch_alarms()
-    alarms = get_alarms_list(data)
+    alarms = sort_alarms_oldest_first(get_alarms_list(data))
+
+    prev_active = set(state.get("active_fingerprints", []))
+    recent = [x for x in state.get("recent_fingerprints", []) if isinstance(x, str)]
+    recent_set = set(recent)
+
+    current_fingerprints: List[str] = []
+    any_sent = False
+
+    for alarm in alarms:
+        fp = fingerprint(alarm)
+        current_fingerprints.append(fp)
+
+        if fp in prev_active or fp in recent_set:
+            continue
+
+        title, msg = format_alarm(alarm)
+        publish_message(title, msg)
+        any_sent = True
+        recent.append(fp)
+        recent_set.add(fp)
+
+    state["active_fingerprints"] = list(dict.fromkeys(current_fingerprints))
+    state["recent_fingerprints"] = recent[-500:]
+
     latest = pick_latest_alarm(alarms)
-    if latest:
-        fp = fingerprint(latest)
-        if fp != state.get("last_fingerprint"):
-            title, msg = format_alarm(latest)
-            publish_message(title, msg)
-            state["last_fingerprint"] = fp
-            save_state(STATE_FILE, state)
+    state["last_fingerprint"] = fingerprint(latest) if latest else None
+
+    save_state(STATE_FILE, state)
 
 
 def handle_shelly_poll(state: Dict[str, Any]) -> None:
@@ -381,10 +423,13 @@ def handle_shelly_poll(state: Dict[str, Any]) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.check_divera_alarm:
+        raise SystemExit(run_divera_alarm_check(args.check_json))
     if args.test_push:
         run_test_push(args)
         return
 
+    validate_push_target()
     state = load_state(STATE_FILE)
     next_divera = 0.0
     next_shelly = 0.0
