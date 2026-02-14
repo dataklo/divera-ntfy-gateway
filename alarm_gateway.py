@@ -86,6 +86,7 @@ STATE_FILE = env("STATE_FILE", "/var/lib/alarm-gateway/state.json")
 NTFY_URL = env("NTFY_URL", "").rstrip("/")
 NTFY_TOPIC = env("NTFY_TOPIC", "")
 NTFY_PRIORITY = env("NTFY_PRIORITY", "5")
+NTFY_STANDARD_PRIORITY = env("NTFY_STANDARD_PRIORITY", "3")
 NTFY_AUTH_TOKEN = env("NTFY_AUTH_TOKEN", "")
 
 REQUEST_TIMEOUT = float(env("REQUEST_TIMEOUT", "15"))
@@ -400,7 +401,8 @@ def format_alarm(alarm: Dict[str, Any]) -> Tuple[str, str]:
 
 
 def ntfy_publish(title: str, message: str) -> None:
-    headers = {"Title": title, "Priority": NTFY_PRIORITY}
+    priority = NTFY_STANDARD_PRIORITY if "probealarm" in title.lower() else NTFY_PRIORITY
+    headers = {"Title": title, "Priority": priority}
     if NTFY_AUTH_TOKEN:
         headers["Authorization"] = f"Bearer {NTFY_AUTH_TOKEN}"
     requests.post(
