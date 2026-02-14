@@ -10,7 +10,8 @@ Pollt die DiVeRa-API auf neue Alarmierungen und sendet Push-Benachrichtigungen a
 - Versand an ntfy (`NTFY_URL` + `NTFY_TOPIC`)
 - Optionaler ntfy Bearer-Token (`NTFY_AUTH_TOKEN`) für geschützte Topics
 - Dedup + State-Datei unter `/var/lib/alarm-gateway/state.json`
-- Optionales Shelly Plus Uni Input-Polling
+- Optionales Shelly Plus Uni Input-Polling (Flankenerkennung, auch wenn Eingang länger auf ON bleibt)
+- Optionaler Webhook-Call bei jedem neuen Alarm
 - One-shot Check: `--check-divera-alarm`
 
 ## Installation
@@ -46,6 +47,7 @@ Optional:
 - `REQUEST_TIMEOUT`
 - `VERIFY_TLS`
 - `SHELLY_*` Variablen
+- `WEBHOOK_URLS` (kommaseparierte Liste, z. B. `https://host1/hook,https://host2/hook`)
 
 Beispiel:
 
@@ -55,6 +57,8 @@ NTFY_URL="https://ntfy.sh"
 NTFY_TOPIC="dein-zufaelliger-topic"
 # Optional bei geschütztem Topic:
 # NTFY_AUTH_TOKEN="<dein-ntfy-token>"
+# Optionaler Webhook (mehrere URLs mit Komma trennen):
+# WEBHOOK_URLS="https://example.local/webhook"
 ```
 
 ## Betrieb
@@ -92,13 +96,17 @@ python3 alarm_gateway.py --check-divera-alarm --check-json
 
 ## Troubleshooting
 
-Keine Pushs:
+Keine Pushs / Webhooks:
 
 - Direkt ntfy testen:
   ```bash
   curl -d "test" https://DEIN-NTFY-SERVER/DEIN-TOPIC
   ```
 - Bei 401/403: `NTFY_AUTH_TOKEN` setzen
+- Webhook testen:
+  ```bash
+  curl -X POST -H "Content-Type: application/json" -d '{"event":"alarm_triggered","title":"Test"}' https://DEIN-WEBHOOK
+  ```
 - DiVeRa testen:
   ```bash
   curl -L "https://divera247.com/api/v2/alarms?accesskey=DEIN_KEY"

@@ -54,17 +54,21 @@ POLL_SECONDS="20"
 STATE_FILE="/var/lib/alarm-gateway/state.json"
 NTFY_PRIORITY="5"
 NTFY_AUTH_TOKEN=""
+WEBHOOK_URLS=""
 REQUEST_TIMEOUT="15"
 VERIFY_TLS="true"
 
 # OPTIONAL (Shelly Plus Uni input polling)
 # SHELLY_UNI_URL="http://192.168.1.50"
-# SHELLY_INPUT_IDS="0,1"
+# SHELLY_INPUT_IDS="0"
 # SHELLY_POLL_SECONDS="1"
 # SHELLY_TRIGGER_ON="true"
 # SHELLY_DEBOUNCE_SECONDS="10"
 # SHELLY_TITLE_TEMPLATE="Shelly Input {input_id}"
 # SHELLY_MESSAGE_TEMPLATE="Shelly Plus Uni Eingang {input_id} wurde ausgelöst."
+
+# OPTIONAL (Webhook-Aufruf bei jedem neuen Alarm; mehrere URLs per Komma)
+# WEBHOOK_URLS="https://example.local/webhook"
 EOF
   chmod 0640 "$ENV_DIR/alarm-gateway.env"
   chown root:"$USER_NAME" "$ENV_DIR/alarm-gateway.env"

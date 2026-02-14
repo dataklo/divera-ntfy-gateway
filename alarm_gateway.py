@@ -87,6 +87,7 @@ NTFY_URL = env("NTFY_URL", "").rstrip("/")
 NTFY_TOPIC = env("NTFY_TOPIC", "")
 NTFY_PRIORITY = env("NTFY_PRIORITY", "5")
 NTFY_AUTH_TOKEN = env("NTFY_AUTH_TOKEN", "")
+WEBHOOK_URLS = [u.strip() for u in env("WEBHOOK_URLS", "").split(",") if u.strip()]
 
 REQUEST_TIMEOUT = float(env("REQUEST_TIMEOUT", "15"))
 VERIFY_TLS = env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
@@ -252,10 +253,6 @@ def _collect_alarms_deep(value: Any, seen: Optional[Set[int]] = None) -> List[Di
 
         collected: List[Dict[str, Any]] = []
 
-        direct = _coerce_alarm_collection(value)
-        if direct:
-            collected.extend(direct)
-
         alarm_section = _get_case_insensitive(value, "alarm")
         if alarm_section is not None:
             collected.extend(_alarms_from_alarm_section(alarm_section))
@@ -412,6 +409,32 @@ def ntfy_publish(title: str, message: str) -> None:
     ).raise_for_status()
 
 
+def webhook_publish(title: str, message: str, source: str, alarm: Optional[Dict[str, Any]] = None) -> None:
+    if not WEBHOOK_URLS:
+        return
+
+    payload: Dict[str, Any] = {
+        "event": "alarm_triggered",
+        "source": source,
+        "title": title,
+        "message": message,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    if alarm is not None:
+        payload["alarm"] = alarm
+
+    for webhook_url in WEBHOOK_URLS:
+        try:
+            requests.post(
+                webhook_url,
+                json=payload,
+                timeout=REQUEST_TIMEOUT,
+                verify=VERIFY_TLS,
+            ).raise_for_status()
+        except Exception as exc:
+            print(f"WARN: webhook call failed ({webhook_url}): {exc}")
+
+
 def fetch_alarms() -> Any:
     if not DIVERA_ACCESSKEY:
         raise RuntimeError(
@@ -489,8 +512,9 @@ def build_test_alarm(args: argparse.Namespace) -> Dict[str, Any]:
     return alarm
 
 
-def publish_message(title: str, message: str) -> None:
+def publish_message(title: str, message: str, source: str = "divera", alarm: Optional[Dict[str, Any]] = None) -> None:
     ntfy_publish(title, message)
+    webhook_publish(title, message, source=source, alarm=alarm)
 
 
 def run_test_push(args: argparse.Namespace) -> None:
@@ -560,7 +584,7 @@ def handle_divera_poll(state: Dict[str, Any]) -> None:
             continue
 
         title, msg = format_alarm(alarm)
-        publish_message(title, msg)
+        publish_message(title, msg, source="divera", alarm=alarm)
         any_sent = True
         recent.append(fp)
         recent_set.add(fp)
@@ -597,14 +621,28 @@ def handle_shelly_poll(state: Dict[str, Any]) -> None:
         if not should_trigger:
             continue
 
-        last_ts = float(state.get("shelly_last_trigger_ts", 0.0))
+        per_input_last = state.get("shelly_last_trigger_ts", {})
+        if isinstance(per_input_last, (int, float)):
+            per_input_last = {key: float(per_input_last)}
+        if not isinstance(per_input_last, dict):
+            per_input_last = {}
+
+        last_ts = float(per_input_last.get(key, 0.0))
         if now - last_ts < SHELLY_DEBOUNCE_SECONDS:
             continue
 
         title = SHELLY_TITLE_TEMPLATE.format(input_id=input_id, state=current)
         message = SHELLY_MESSAGE_TEMPLATE.format(input_id=input_id, state=current)
-        publish_message(title, message)
-        state["shelly_last_trigger_ts"] = now
+        shelly_alarm = {
+            "id": f"shelly-input-{input_id}",
+            "source": "shelly_plus_uni",
+            "input_id": input_id,
+            "state": current,
+            "date": datetime.utcnow().isoformat() + "Z",
+        }
+        publish_message(title, message, source="shelly", alarm=shelly_alarm)
+        per_input_last[key] = now
+        state["shelly_last_trigger_ts"] = per_input_last
         save_state(STATE_FILE, state)
 
 
