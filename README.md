@@ -1,309 +1,81 @@
 # divera-ntfy-gateway
 
-Pollt die DiVeRa-API auf neue Alarmierungen und sendet Push-Benachrichtigungen an einen ntfy-Topic.
-Damit bekommst du Push auf Android **ohne** Google Play Services / FCM.
+Pollt die DiVeRa-API auf neue Alarmierungen und sendet Push-Benachrichtigungen an einen **ntfy**-Topic.
 
-**Zielbild (Selfhosted):**
-- Du betreibst Nextcloud selbst
-- Du nutzt z. B. LineageOS ohne Google-Dienste
-- Du möchtest DiVeRa-Alarmierungen trotzdem als Push auf dem Handy erhalten
+## Features
 
-Genau dafür ist dieses Projekt gedacht: **DiVeRa → Gateway → UnifiedPush-Distributor (ntfy oder NextPush) → Smartphone**.
+- Polling von DiVeRa über:
+  - `https://divera247.com/api/v2/alarms`
+  - Fallback: `https://app.divera247.com/api/v2/pull/all`
+- Versand an ntfy (`NTFY_URL` + `NTFY_TOPIC`)
+- Optionaler ntfy Bearer-Token (`NTFY_AUTH_TOKEN`) für geschützte Topics
+- Dedup + State-Datei unter `/var/lib/alarm-gateway/state.json`
+- Optionales Shelly Plus Uni Input-Polling
+- One-shot Check: `--check-divera-alarm`
 
-Repository:
-https://github.com/dataklo/divera-ntfy-gateway
+## Installation
 
----
-
-## Was macht das Projekt?
-
-- Regelmäßiges Polling der DiVeRa-API  
-  `GET https://divera247.com/api/v2/alarms?accesskey=...` oder `GET https://app.divera247.com/api/v2/pull/all?accesskey=...`
-- Erkennen neuer Alarmierungen (Dedup per Fingerprint/State)
-- Versand einer Push-Benachrichtigung über **UnifiedPush** (z. B. ntfy oder NextPush)
-
----
-
-
-## 0) Schnellstart für **blanke LXC** (Proxmox, Debian 12)
-
-Wenn dein Container wirklich „frisch“ ist, geh exakt so vor:
-
-1. Container starten und als `root` einloggen
-2. Basis-Pakete installieren:
-```bash
-apt update
-apt install -y git ca-certificates curl
-```
-3. Repository klonen:
-```bash
-cd /root
-git clone https://github.com/dataklo/divera-ntfy-gateway.git
-cd divera-ntfy-gateway
-```
-4. Installation ausführen:
-```bash
-bash scripts/install.sh
-```
-5. Konfiguration setzen:
-```bash
-nano /etc/alarm-gateway/alarm-gateway.env
-```
-Mindestens diese Werte eintragen:
-- `DIVERA_ACCESSKEY`
-- und **eine** Push-Variante:
-  - `NTFY_URL` + `NTFY_TOPIC` **oder**
-  - `UPPUSH_ENDPOINT`
-
-6. Dienst neu starten und prüfen:
-```bash
-systemctl restart alarm-gateway
-systemctl status alarm-gateway --no-pager
-journalctl -u alarm-gateway -n 50 --no-pager
-```
-
-Wenn `active (running)` angezeigt wird und keine Fehler im Journal stehen, läuft das Gateway korrekt.
-
----
-
-## 1) Installation auf dem Server (Debian/Ubuntu, Proxmox LXC/VM)
-
-### Voraussetzungen
-- Debian/Ubuntu (VM oder LXC)
-- Internetzugang
-- DiVeRa Accesskey
-- Push-Distributor (**ntfy** oder **NextPush**)
-- systemd im Container aktiv (für den `alarm-gateway` Service)
-
-> Tipp für Proxmox-LXC: Debian 12 Template + funktionierendes DNS reichen normalerweise aus.
-
-### Empfohlene Selfhosted-Setups
-
-#### Setup 1: Vollständig selfhosted mit Nextcloud
-- **Server:**
-  - `divera-ntfy-gateway` (dieses Projekt)
-  - Nextcloud mit `uppush` (UnifiedPush Provider)
-- **Smartphone (LineageOS):**
-  - NextPush App (Distributor)
-- **Vorteil:** Alles in deiner eigenen Infrastruktur
-
-#### Setup 2: Selfhosted mit eigenem ntfy
-- **Server:**
-  - `divera-ntfy-gateway`
-  - eigener ntfy-Server
-- **Smartphone (LineageOS):**
-  - ntfy App
-- **Vorteil:** Sehr simpel und robust
-
-### Repository klonen
 ```bash
 git clone https://github.com/dataklo/divera-ntfy-gateway.git
 cd divera-ntfy-gateway
-```
-
-### Installation
-```bash
 sudo bash scripts/install.sh
 ```
 
-### Konfiguration
+## Konfiguration
+
+Datei:
+
 ```bash
-sudo nano /etc/alarm-gateway/alarm-gateway.env
+/etc/alarm-gateway/alarm-gateway.env
 ```
 
-Danach Dienst neu starten:
+Pflicht:
+
+- `DIVERA_ACCESSKEY`
+- `NTFY_URL`
+- `NTFY_TOPIC`
+
+Optional:
+
+- `DIVERA_URL` (Default: `https://divera247.com/api/v2/alarms`)
+- `DIVERA_FALLBACK_URL` (Default: `https://app.divera247.com/api/v2/pull/all`)
+- `POLL_SECONDS` (Default: `20`)
+- `STATE_FILE`
+- `NTFY_PRIORITY`
+- `NTFY_AUTH_TOKEN`
+- `REQUEST_TIMEOUT`
+- `VERIFY_TLS`
+- `SHELLY_*` Variablen
+
+Beispiel:
+
+```env
+DIVERA_ACCESSKEY="DEIN_DIVERA_KEY"
+NTFY_URL="https://ntfy.sh"
+NTFY_TOPIC="dein-zufaelliger-topic"
+# Optional bei geschütztem Topic:
+# NTFY_AUTH_TOKEN="<dein-ntfy-token>"
+```
+
+## Betrieb
+
 ```bash
 sudo systemctl restart alarm-gateway
-```
-
-Logs anzeigen:
-```bash
+sudo systemctl status alarm-gateway --no-pager
 sudo journalctl -u alarm-gateway -f
 ```
 
----
+## Update
 
-## 2) Update / Entfernen
-
-### Update
 ```bash
 cd divera-ntfy-gateway
 git pull
 sudo bash scripts/update.sh
 ```
 
-### Uninstall
-```bash
-sudo bash scripts/uninstall.sh
-```
+## Tests / Checks
 
-⚠️ Achtung: Entfernt auch Secrets und State-Daten.
-
----
-
-## 3) Smartphone-Einrichtung (sehr wichtig)
-
-### Grundprinzip
-Für UnifiedPush brauchst du **immer einen Distributor auf dem Smartphone**.  
-Apps selbst empfangen **keine Pushs direkt**, sondern über diesen Distributor.
-
-Du hast **zwei sinnvolle Varianten**:
-
----
-
-### Variante A (empfohlen): ntfy als Push-Distributor
-
-**Was brauchst du auf dem Smartphone?**
-- ✅ **ntfy App** (F-Droid oder Play Store)
-- ❌ **keine** Nextcloud-App nötig
-- ❌ **kein** Google / FCM nötig
-
-**Einrichtung**
-1. ntfy App installieren
-2. Falls selfhosted: eigenen ntfy-Server eintragen
-3. Topic abonnieren (z. B. `fw-alarme-x9k3p`)
-
-Test:
-```bash
-curl -d "Test vom divera-gateway" https://ntfy.example.com/fw-alarme-x9k3p
-```
-
-➡️ Wenn die Nachricht ankommt, ist alles korrekt.
-
-Infos:
-https://docs.ntfy.sh/subscribe/phone/
-
----
-
-### Variante B: Nextcloud + NextPush (UnifiedPush über Nextcloud)
-
-Diese Variante nutzt deine **Nextcloud als Push-Backend**.
-
-#### Auf dem Nextcloud-Server
-- App **UnifiedPush Provider (`uppush`)** installieren
-- Hintergrundjobs / Cron aktiv
-- Redis empfohlen
-
-#### Auf dem Smartphone
-- ✅ **NextPush App**
-- ❌ **keine** ntfy-App nötig
-- ❌ **kein** Google / FCM nötig
-
-**Wichtig**
-- NextPush ist **nur der Distributor**
-- Das divera-ntfy-gateway sendet trotzdem an ntfy **oder** an einen UnifiedPush-Endpunkt
-- Nextcloud ist **nicht zwingend erforderlich**, nur wenn du UnifiedPush darüber betreiben willst
-
-Infos:
-https://unifiedpush.org/users/distributors/nextpush/
-
----
-
-### Schritt-für-Schritt: nur Nextcloud + uppush (ohne ntfy)
-
-Wenn du bereits eine öffentlich erreichbare Nextcloud mit `uppush` hast, gehe so vor:
-
-1. **NextPush auf dem Smartphone installieren** und mit deiner Nextcloud verbinden.
-2. In NextPush einen Push-Endpoint erzeugen/kopieren (URL im Stil `https://<cloud>/index.php/apps/uppush/push/<token>`).
-3. Auf dem Gateway die Env-Datei öffnen:
-```bash
-sudo nano /etc/alarm-gateway/alarm-gateway.env
-```
-4. Nur folgende Push-Werte setzen:
-```env
-DIVERA_ACCESSKEY="DEIN_DIVERA_KEY"
-UPPUSH_ENDPOINT="https://nextcloud.example.com/index.php/apps/uppush/push/<endpoint-token>"
-# optional:
-# UPPUSH_AUTH_HEADER="Bearer <token>"
-```
-5. Falls vorhanden, alte ntfy-Werte auskommentieren/leer lassen (`NTFY_URL`, `NTFY_TOPIC`), damit klar nur uppush genutzt wird.
-6. Dienst neu starten und Logs prüfen:
-```bash
-sudo systemctl restart alarm-gateway
-sudo systemctl status alarm-gateway --no-pager
-sudo journalctl -u alarm-gateway -n 50 --no-pager
-```
-7. Endpoint testen:
-```bash
-curl -X POST -d "Test vom divera-gateway" "https://nextcloud.example.com/index.php/apps/uppush/push/<endpoint-token>"
-```
-
-Wenn der Curl-Test ankommt und der Service dauerhaft `active (running)` bleibt, ist die uppush-only Konfiguration fertig.
-
-## 4) Brauche ich neben NextPush noch etwas auf dem Smartphone?
-
-**Kurzantwort:** ❌ Nein
-
-Wenn du **NextPush** nutzt:
-- NextPush = dein UnifiedPush-Distributor
-- Mehr brauchst du **nicht**
-- Keine Google-Dienste
-- Keine zusätzliche App
-
-Wenn du **ntfy** nutzt:
-- ntfy App = Distributor **und** Client
-
----
-
-## 5) Konfiguration
-
-Datei:
-```bash
-/etc/alarm-gateway/alarm-gateway.env
-```
-
-Pflicht:
-- `DIVERA_ACCESSKEY`
-- und **eine** Push-Variante:
-  - **Variante ntfy:** `NTFY_URL` + `NTFY_TOPIC`
-  - **Variante uppush/UnifiedPush-Endpoint:** `UPPUSH_ENDPOINT`
-
-Optional:
-- `POLL_SECONDS` (Standard: 20)
-- `STATE_FILE`
-- `NTFY_PRIORITY`
-- `UPPUSH_AUTH_HEADER` (optional `Authorization` Header für Endpoint-Auth)
-- `VERIFY_TLS`
-- `SHELLY_UNI_URL` (optional: Shelly Plus Uni für Input-Polling)
-- `SHELLY_INPUT_IDS` (Standard: `0,1`)
-- `SHELLY_POLL_SECONDS` (Standard: `1`)
-- `SHELLY_TRIGGER_ON` (`true` = Rising Edge, `false` = Falling Edge)
-- `SHELLY_DEBOUNCE_SECONDS` (Standard: `10`)
-- `SHELLY_TITLE_TEMPLATE`
-- `SHELLY_MESSAGE_TEMPLATE`
-
-### Beispiel A: ntfy
-```env
-DIVERA_ACCESSKEY="DEIN_DIVERA_KEY"
-NTFY_URL="https://ntfy.sh"
-NTFY_TOPIC="dein-zufaelliger-topic"
-```
-
-### Beispiel B: Nextcloud/uppush
-```env
-DIVERA_ACCESSKEY="DEIN_DIVERA_KEY"
-UPPUSH_ENDPOINT="https://nextcloud.example.com/index.php/apps/uppush/push/<dein-endpoint-token>"
-# Optional, falls dein Endpoint Auth verlangt:
-# UPPUSH_AUTH_HEADER="Bearer <token>"
-```
-
-### Beispiel C: Shelly Plus Uni Input-Trigger
-```env
-# zusätzlich zu Divera + Push-Ziel
-SHELLY_UNI_URL="http://192.168.1.50"
-SHELLY_INPUT_IDS="0,1"
-SHELLY_POLL_SECONDS="1"
-SHELLY_TRIGGER_ON="true"
-SHELLY_DEBOUNCE_SECONDS="10"
-SHELLY_TITLE_TEMPLATE="Shelly Input {input_id}"
-SHELLY_MESSAGE_TEMPLATE="Shelly Plus Uni Eingang {input_id} wurde ausgelöst."
-```
-
----
-
-## 5a) Manuelle Test-Pushs über das Gateway
-
-Du kannst eine Test-Push direkt über das Gateway senden, ohne auf einen echten DiVeRa-Alarm zu warten:
+Test-Push:
 
 ```bash
 cd /opt/alarm-gateway
@@ -311,65 +83,29 @@ source venv/bin/activate
 python3 alarm_gateway.py --test-push --test-title "Probealarm" --test-text "Testtext"
 ```
 
-Zusätzlich können beliebige Alarm-Felder gesetzt werden (z. B. wie bei DiVeRa):
+DiVeRa One-shot Check:
 
 ```bash
-python3 alarm_gateway.py --test-push \
-  --test-title "B3 - Brand" \
-  --test-text "Ausgelöst über Testfunktion" \
-  --test-address "Musterstraße 12" \
-  --test-url "https://example.org/alarm/123" \
-  --test-id "123" \
-  --test-date "2026-02-11T12:34:00+01:00" \
-  --test-field stichwort=B3 \
-  --test-field ort=Berlin \
-  --test-field note="Freitext"
+python3 alarm_gateway.py --check-divera-alarm --check-json
 ```
 
-Alternativ kannst du ein komplettes JSON-Objekt übergeben:
+## Troubleshooting
 
-```bash
-python3 alarm_gateway.py --test-push --test-alarm-json '{"title":"Probealarm","address":"Musterweg 1","text":"JSON Test"}'
-```
+Keine Pushs:
 
----
-
-## 5b) Mini-Checkliste: „Bin ich fertig?“
-
-- `systemctl status alarm-gateway` zeigt **active (running)**
-- in `journalctl -u alarm-gateway -f` erscheinen **keine dauerhaften ERRORs**
-- Testnachricht kommt auf dem Smartphone an:
-```bash
-# ntfy
-curl -d "Test vom divera-gateway" https://DEIN-NTFY-SERVER/DEIN-TOPIC
-
-# uppush endpoint
-curl -X POST -d "Test vom divera-gateway" "https://nextcloud.example.com/index.php/apps/uppush/push/<endpoint-token>"
-```
-
-Wenn alle drei Punkte passen, ist die Installation auf einer blanken LXC in der Regel sauber abgeschlossen.
-
----
-
-## 6) Troubleshooting
-
-### Keine Pushs
-- Teste den Push-Zielpfad manuell (`curl -d test ...`)
-  - ntfy: `curl -d test https://DEIN-NTFY-SERVER/DEIN-TOPIC`
-  - uppush endpoint: `curl -X POST -d test https://.../apps/uppush/push/<endpoint-token>`
+- Direkt ntfy testen:
+  ```bash
+  curl -d "test" https://DEIN-NTFY-SERVER/DEIN-TOPIC
+  ```
+- Bei 401/403: `NTFY_AUTH_TOKEN` setzen
+- DiVeRa testen:
+  ```bash
+  curl "https://divera247.com/api/v2/alarms?accesskey=DEIN_KEY"
+  curl "https://app.divera247.com/api/v2/pull/all?accesskey=DEIN_KEY"
+  python3 alarm_gateway.py --check-divera-alarm --check-json
+  ```
 - Logs prüfen: `journalctl -u alarm-gateway -f`
-- API testen:
-```bash
-curl "https://divera247.com/api/v2/alarms?accesskey=DEIN_KEY"
-```
-
-### Doppelte Pushs
-- State-Datei prüfen:
-```bash
-/var/lib/alarm-gateway/state.json
-```
-
----
 
 ## Lizenz
+
 MIT
