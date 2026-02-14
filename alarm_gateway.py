@@ -175,7 +175,8 @@ def _looks_like_alarm_entry(value: Any) -> bool:
 
     marker_keys = {
         "id", "alarm_id", "alarmId", "title", "text", "date", "ts_create",
-        "ts_update", "address", "closed", "deleted",
+        "created_at", "ts_update", "address", "adresse", "ort", "location",
+        "keyword", "stichwort", "closed", "deleted",
     }
     return any(key in value for key in marker_keys)
 
