@@ -151,6 +151,24 @@ def safe_get(alarm: Dict[str, Any], keys: List[str]) -> str:
     return ""
 
 
+def alarm_id_value(alarm: Dict[str, Any]) -> str:
+    return safe_get(alarm, ["id", "alarm_id", "alarmId"])
+
+
+def _with_alarm_id_from_key(alarm_id: Any, alarm: Dict[str, Any]) -> Dict[str, Any]:
+    if alarm_id_value(alarm):
+        return alarm
+
+    normalized_id = str(alarm_id).strip()
+    if not normalized_id:
+        return alarm
+
+    alarm_with_id = dict(alarm)
+    alarm_with_id["id"] = normalized_id
+    alarm_with_id.setdefault("alarm_id", normalized_id)
+    return alarm_with_id
+
+
 def _coerce_alarm_items_map(items: Any, sorting: Any = None) -> List[Dict[str, Any]]:
     if not isinstance(items, dict):
         return []
@@ -160,11 +178,15 @@ def _coerce_alarm_items_map(items: Any, sorting: Any = None) -> List[Dict[str, A
         for alarm_id in sorting:
             alarm = items.get(str(alarm_id))
             if isinstance(alarm, dict):
-                alarms.append(alarm)
+                alarms.append(_with_alarm_id_from_key(alarm_id, alarm))
         if alarms:
             return alarms
 
-    return [alarm for alarm in items.values() if isinstance(alarm, dict)]
+    alarms_from_items: List[Dict[str, Any]] = []
+    for alarm_id, alarm in items.items():
+        if isinstance(alarm, dict):
+            alarms_from_items.append(_with_alarm_id_from_key(alarm_id, alarm))
+    return alarms_from_items
 
 
 def get_alarms_list(data: Any) -> List[Dict[str, Any]]:
@@ -236,7 +258,7 @@ def sort_alarms_oldest_first(alarms: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 def fingerprint(alarm: Dict[str, Any]) -> str:
     parts = [
-        safe_get(alarm, ["id", "alarm_id", "alarmId"]),
+        alarm_id_value(alarm),
         safe_get(alarm, ["title", "stichwort", "keyword", "einsatzstichwort"]),
         safe_get(alarm, ["address", "adresse", "ort", "location"]),
         safe_get(alarm, ["date", "datetime", "time", "created_at", "createdAt"]),
@@ -249,15 +271,17 @@ def fingerprint(alarm: Dict[str, Any]) -> str:
 
 def format_alarm(alarm: Dict[str, Any]) -> Tuple[str, str]:
     title = safe_get(alarm, ["title", "stichwort", "keyword", "einsatzstichwort"]) or "DiVeRa Alarm"
+    alarm_id = alarm_id_value(alarm)
+    text = safe_get(alarm, ["text", "info", "description", "beschreibung", "note"])
+    address = safe_get(alarm, ["address", "adresse", "ort", "location"])
+
     lines: List[str] = []
-
-    addr = safe_get(alarm, ["address", "adresse", "ort", "location"])
-    if addr:
-        lines.append(f"📍 {addr}")
-
-    info = safe_get(alarm, ["text", "info", "description", "beschreibung", "note"])
-    if info:
-        lines.append(info)
+    if alarm_id:
+        lines.append(f"Alarmnummer: {alarm_id}")
+    if text:
+        lines.append(f"Text: {text}")
+    if address:
+        lines.append(f"Adresse: {address}")
 
     link = safe_get(alarm, ["url", "link", "alarm_url"])
     if link:
@@ -265,6 +289,7 @@ def format_alarm(alarm: Dict[str, Any]) -> Tuple[str, str]:
 
     if not lines:
         lines.append("Neue Alarmierung eingegangen.")
+
     return title, "\n".join(lines)
 
 
