@@ -87,6 +87,7 @@ DiVeRa One-shot Check:
 
 ```bash
 python3 alarm_gateway.py --check-divera-alarm --check-json
+# Liest automatisch /etc/alarm-gateway/alarm-gateway.env (falls vorhanden)
 ```
 
 ## Troubleshooting
@@ -100,10 +101,14 @@ Keine Pushs:
 - Bei 401/403: `NTFY_AUTH_TOKEN` setzen
 - DiVeRa testen:
   ```bash
-  curl "https://divera247.com/api/v2/alarms?accesskey=DEIN_KEY"
+  curl -L "https://divera247.com/api/v2/alarms?accesskey=DEIN_KEY"
   curl "https://app.divera247.com/api/v2/pull/all?accesskey=DEIN_KEY"
   python3 alarm_gateway.py --check-divera-alarm --check-json
   ```
+- Wenn `DIVERA_ACCESSKEY` noch auf `PASTE_YOUR_DIVERA_ACCESSKEY_HERE` steht, wird nicht gepollt.
+- Wenn `Missing push target` erscheint: `NTFY_URL` und `NTFY_TOPIC` setzen.
+- Nach Änderungen an `/etc/alarm-gateway/alarm-gateway.env` immer neu starten: `sudo systemctl restart alarm-gateway`.
+- CLI-Checks laden standardmäßig `/etc/alarm-gateway/alarm-gateway.env`; alternativ Pfad setzen mit `ALARM_GATEWAY_ENV_FILE=/pfad/zur.env`.
 - Logs prüfen: `journalctl -u alarm-gateway -f`
 
 ## Lizenz
