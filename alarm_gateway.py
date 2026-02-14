@@ -20,7 +20,45 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 
+DEFAULT_ENV_FILE = "/etc/alarm-gateway/alarm-gateway.env"
+
+
+def load_env_file(path: str) -> None:
+    if not path or not os.path.isfile(path):
+        return
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+
+                if "=" not in line:
+                    continue
+
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
+
+                os.environ.setdefault(key, value)
+    except Exception:
+        return
+
+
+load_env_file(os.environ.get("ALARM_GATEWAY_ENV_FILE", DEFAULT_ENV_FILE))
+
+
 DIVERA_URL_DEFAULT = "https://divera247.com/api/v2/alarms"
+DIVERA_ACCESSKEY_PLACEHOLDER = "PASTE_YOUR_DIVERA_ACCESSKEY_HERE"
 
 
 def env(name: str, default: Optional[str] = None, required: bool = False) -> str:
@@ -30,9 +68,17 @@ def env(name: str, default: Optional[str] = None, required: bool = False) -> str
     return str(val) if val is not None else ""
 
 
+def _is_placeholder_secret(value: str, placeholder: str) -> bool:
+    normalized = value.strip().strip('"').strip("'")
+    if not normalized:
+        return False
+    return normalized.upper() == placeholder.upper()
+
+
 DIVERA_URL = env("DIVERA_URL", DIVERA_URL_DEFAULT)
 DIVERA_FALLBACK_URL = env("DIVERA_FALLBACK_URL", "https://app.divera247.com/api/v2/pull/all")
-DIVERA_ACCESSKEY = env("DIVERA_ACCESSKEY", "")
+_raw_divera_accesskey = env("DIVERA_ACCESSKEY", "")
+DIVERA_ACCESSKEY = "" if _is_placeholder_secret(_raw_divera_accesskey, DIVERA_ACCESSKEY_PLACEHOLDER) else _raw_divera_accesskey
 
 POLL_SECONDS = int(env("POLL_SECONDS", "20"))
 STATE_FILE = env("STATE_FILE", "/var/lib/alarm-gateway/state.json")
@@ -237,7 +283,10 @@ def ntfy_publish(title: str, message: str) -> None:
 
 def fetch_alarms() -> Any:
     if not DIVERA_ACCESSKEY:
-        raise RuntimeError("DIVERA_ACCESSKEY is empty (required for DiVeRa polling)")
+        raise RuntimeError(
+            "DIVERA_ACCESSKEY is empty or still set to template placeholder "
+            f"('{DIVERA_ACCESSKEY_PLACEHOLDER}')."
+        )
 
     urls = [DIVERA_URL]
     if DIVERA_FALLBACK_URL and DIVERA_FALLBACK_URL not in urls:
