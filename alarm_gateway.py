@@ -169,6 +169,17 @@ def _with_alarm_id_from_key(alarm_id: Any, alarm: Dict[str, Any]) -> Dict[str, A
     return alarm_with_id
 
 
+def _looks_like_alarm_entry(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+
+    marker_keys = {
+        "id", "alarm_id", "alarmId", "title", "text", "date", "ts_create",
+        "ts_update", "address", "closed", "deleted",
+    }
+    return any(key in value for key in marker_keys)
+
+
 def _coerce_alarm_items_map(items: Any, sorting: Any = None) -> List[Dict[str, Any]]:
     if not isinstance(items, dict):
         return []
@@ -177,37 +188,64 @@ def _coerce_alarm_items_map(items: Any, sorting: Any = None) -> List[Dict[str, A
         alarms: List[Dict[str, Any]] = []
         for alarm_id in sorting:
             alarm = items.get(str(alarm_id))
-            if isinstance(alarm, dict):
+            if _looks_like_alarm_entry(alarm):
                 alarms.append(_with_alarm_id_from_key(alarm_id, alarm))
         if alarms:
             return alarms
 
     alarms_from_items: List[Dict[str, Any]] = []
     for alarm_id, alarm in items.items():
-        if isinstance(alarm, dict):
+        if _looks_like_alarm_entry(alarm):
             alarms_from_items.append(_with_alarm_id_from_key(alarm_id, alarm))
     return alarms_from_items
 
 
+def _coerce_alarm_collection(value: Any, sorting: Any = None) -> List[Dict[str, Any]]:
+    if isinstance(value, list):
+        return [alarm for alarm in value if _looks_like_alarm_entry(alarm)]
+    if isinstance(value, dict):
+        return _coerce_alarm_items_map(value, sorting)
+    return []
+
+
+def _alarms_from_alarm_section(section: Any) -> List[Dict[str, Any]]:
+    if isinstance(section, list):
+        return _coerce_alarm_collection(section)
+
+    if not isinstance(section, dict):
+        return []
+
+    if "items" in section:
+        return _coerce_alarm_collection(section.get("items"), section.get("sorting"))
+
+    return _coerce_alarm_collection(section)
+
+
 def get_alarms_list(data: Any) -> List[Dict[str, Any]]:
     if isinstance(data, list):
-        return [a for a in data if isinstance(a, dict)]
+        return [a for a in data if _looks_like_alarm_entry(a)]
 
     if not isinstance(data, dict):
         return []
 
-    for k in ("alarms", "data", "items", "result"):
-        v = data.get(k)
-        if isinstance(v, list):
-            return [a for a in v if isinstance(a, dict)]
+    for key in ("alarms", "result"):
+        alarms = _coerce_alarm_collection(data.get(key))
+        if alarms:
+            return alarms
 
     root_data = data.get("data")
-    if isinstance(root_data, dict):
-        alarm_section = root_data.get("alarm")
-        if isinstance(alarm_section, dict):
-            alarms = _coerce_alarm_items_map(alarm_section.get("items"), alarm_section.get("sorting"))
-            if alarms:
-                return alarms
+    if isinstance(root_data, list):
+        alarms = _coerce_alarm_collection(root_data)
+        if alarms:
+            return alarms
+    elif isinstance(root_data, dict):
+        alarms = _alarms_from_alarm_section(root_data.get("alarm"))
+        if alarms:
+            return alarms
+
+    alarms = _alarms_from_alarm_section(data.get("alarm"))
+    if alarms:
+        return alarms
 
     alarms = _coerce_alarm_items_map(data.get("items"), data.get("sorting"))
     if alarms:
