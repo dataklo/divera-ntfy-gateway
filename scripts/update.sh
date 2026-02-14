@@ -9,6 +9,7 @@ echo "[*] Updating application files in $APP_DIR ..."
 rsync -a --delete \
   --exclude ".git" \
   --exclude ".github" \
+  --exclude "venv" \
   --exclude "scripts" \
   --exclude "systemd" \
   "$REPO_ROOT/" "$APP_DIR/"
