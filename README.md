@@ -18,7 +18,7 @@ https://github.com/dataklo/divera-ntfy-gateway
 ## Was macht das Projekt?
 
 - Regelmäßiges Polling der DiVeRa-API  
-  `GET https://divera247.com/api/v2/alarms?accesskey=...`
+  `GET https://divera247.com/api/v2/alarms?accesskey=...` oder `GET https://app.divera247.com/api/v2/pull/all?accesskey=...`
 - Erkennen neuer Alarmierungen (Dedup per Fingerprint/State)
 - Versand einer Push-Benachrichtigung über **UnifiedPush** (z. B. ntfy oder NextPush)
 

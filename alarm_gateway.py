@@ -98,22 +98,76 @@ def safe_get(alarm: Dict[str, Any], keys: List[str]) -> str:
     return ""
 
 
+def _coerce_alarm_items_map(items: Any, sorting: Any = None) -> List[Dict[str, Any]]:
+    if not isinstance(items, dict):
+        return []
+
+    if isinstance(sorting, list):
+        alarms: List[Dict[str, Any]] = []
+        for alarm_id in sorting:
+            alarm = items.get(str(alarm_id))
+            if isinstance(alarm, dict):
+                alarms.append(alarm)
+        if alarms:
+            return alarms
+
+    return [alarm for alarm in items.values() if isinstance(alarm, dict)]
+
+
 def get_alarms_list(data: Any) -> List[Dict[str, Any]]:
-    # DiVeRa responses can differ depending on configuration; handle common cases.
+    # DiVeRa responses can differ depending on endpoint; handle common cases.
     if isinstance(data, list):
         return [a for a in data if isinstance(a, dict)]
-    if isinstance(data, dict):
-        for k in ("alarms", "data", "items", "result"):
-            v = data.get(k)
-            if isinstance(v, list):
-                return [a for a in v if isinstance(a, dict)]
+
+    if not isinstance(data, dict):
+        return []
+
+    # Legacy/common direct list payloads.
+    for k in ("alarms", "data", "items", "result"):
+        v = data.get(k)
+        if isinstance(v, list):
+            return [a for a in v if isinstance(a, dict)]
+
+    # pull/all style payload: data -> alarm -> items (+ optional sorting list).
+    root_data = data.get("data")
+    if isinstance(root_data, dict):
+        alarm_section = root_data.get("alarm")
+        if isinstance(alarm_section, dict):
+            alarms = _coerce_alarm_items_map(
+                alarm_section.get("items"),
+                alarm_section.get("sorting"),
+            )
+            if alarms:
+                return alarms
+
+    # Generic nested fallback if caller points directly at an alarm section.
+    alarms = _coerce_alarm_items_map(data.get("items"), data.get("sorting"))
+    if alarms:
+        return alarms
+
     return []
 
 
 def pick_latest_alarm(alarms: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not alarms:
         return None
-    # In most cases: newest first
+
+    # If a sortable timestamp exists, prefer the newest alarm deterministically.
+    candidates: List[Tuple[int, Dict[str, Any]]] = []
+    for alarm in alarms:
+        for key in ("ts_update", "ts_create", "date", "id"):
+            value = alarm.get(key)
+            if isinstance(value, int):
+                candidates.append((value, alarm))
+                break
+            if isinstance(value, str) and value.isdigit():
+                candidates.append((int(value), alarm))
+                break
+
+    if candidates:
+        return max(candidates, key=lambda x: x[0])[1]
+
+    # Fallback: first item in already-sorted payload.
     return alarms[0]
 
 
