@@ -57,7 +57,8 @@ def load_env_file(path: str) -> None:
 load_env_file(os.environ.get("ALARM_GATEWAY_ENV_FILE", DEFAULT_ENV_FILE))
 
 
-DIVERA_URL_DEFAULT = "https://divera247.com/api/v2/alarms"
+DIVERA_URL_DEFAULT = "https://www.divera247.com/api/v2/alarms?accesskey=<API-Key>"
+DIVERA_FALLBACK_URL_DEFAULT = "https://divera247.com/api/v2/alarms?accesskey=<API-Key>"
 DIVERA_ACCESSKEY_PLACEHOLDER = "PASTE_YOUR_DIVERA_ACCESSKEY_HERE"
 
 
@@ -76,7 +77,7 @@ def _is_placeholder_secret(value: str, placeholder: str) -> bool:
 
 
 DIVERA_URL = env("DIVERA_URL", DIVERA_URL_DEFAULT)
-DIVERA_FALLBACK_URL = env("DIVERA_FALLBACK_URL", "https://app.divera247.com/api/v2/pull/all")
+DIVERA_FALLBACK_URL = env("DIVERA_FALLBACK_URL", DIVERA_FALLBACK_URL_DEFAULT)
 _raw_divera_accesskey = env("DIVERA_ACCESSKEY", "")
 DIVERA_ACCESSKEY = "" if _is_placeholder_secret(_raw_divera_accesskey, DIVERA_ACCESSKEY_PLACEHOLDER) else _raw_divera_accesskey
 
@@ -414,6 +415,23 @@ def ntfy_publish(title: str, message: str) -> None:
     ).raise_for_status()
 
 
+def build_divera_request_url(base_url: str, accesskey: str) -> str:
+    raw = base_url.strip()
+    if not raw:
+        return ""
+
+    if "<api-key>" in raw.lower():
+        return raw.replace("<API-Key>", accesskey).replace("<api-key>", accesskey)
+
+    if "accesskey=" in raw.lower():
+        if raw.rstrip().endswith("="):
+            return f"{raw}{accesskey}"
+        return raw
+
+    separator = "&" if "?" in raw else "?"
+    return f"{raw}{separator}accesskey={accesskey}"
+
+
 def fetch_alarms() -> Any:
     if not DIVERA_ACCESSKEY:
         raise RuntimeError(
@@ -421,25 +439,25 @@ def fetch_alarms() -> Any:
             f"('{DIVERA_ACCESSKEY_PLACEHOLDER}')."
         )
 
-    urls = [DIVERA_URL]
-    if DIVERA_FALLBACK_URL and DIVERA_FALLBACK_URL not in urls:
-        urls.append(DIVERA_FALLBACK_URL)
+    urls = [build_divera_request_url(DIVERA_URL, DIVERA_ACCESSKEY)]
+    fallback = build_divera_request_url(DIVERA_FALLBACK_URL, DIVERA_ACCESSKEY) if DIVERA_FALLBACK_URL else ""
+    if fallback and fallback not in urls:
+        urls.append(fallback)
 
     errors: List[str] = []
-    for url in urls:
+    for request_url in urls:
         try:
             r = requests.get(
-                url,
-                params={"accesskey": DIVERA_ACCESSKEY},
+                request_url,
                 timeout=REQUEST_TIMEOUT,
                 verify=VERIFY_TLS,
             )
             r.raise_for_status()
             payload = r.json()
-            debug_log(f"DiVeRa API OK via {url}; top-level type={type(payload).__name__}")
+            debug_log(f"DiVeRa API OK via {request_url}; top-level type={type(payload).__name__}")
             return payload
         except Exception as e:
-            errors.append(f"{url}: {e}")
+            errors.append(f"{request_url}: {e}")
 
     raise RuntimeError("DiVeRa API request failed on all configured URLs: " + " | ".join(errors))
 

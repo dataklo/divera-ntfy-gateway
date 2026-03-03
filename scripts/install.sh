@@ -48,8 +48,8 @@ NTFY_TOPIC="fw-alarme-x9k3p"
 
 
 # OPTIONAL
-DIVERA_URL="https://divera247.com/api/v2/alarms"
-DIVERA_FALLBACK_URL="https://app.divera247.com/api/v2/pull/all"
+DIVERA_URL="https://www.divera247.com/api/v2/alarms?accesskey=<API-Key>"
+DIVERA_FALLBACK_URL="https://divera247.com/api/v2/alarms?accesskey=<API-Key>"
 POLL_SECONDS="20"
 STATE_FILE="/var/lib/alarm-gateway/state.json"
 NTFY_PRIORITY="5"
