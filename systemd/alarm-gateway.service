@@ -23,5 +23,19 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/alarm-gateway /opt/alarm-gateway /etc/alarm-gateway
 
+# Additional hardening / resource guards
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=true
+# Resource limits
+MemoryMax=200M
+CPUQuota=80%
+TasksMax=100
+
 [Install]
 WantedBy=multi-user.target

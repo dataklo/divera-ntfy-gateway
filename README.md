@@ -42,10 +42,14 @@ Optional:
 - `POLL_SECONDS` (Default: `20`)
 - `STATE_FILE`
 - `NTFY_PRIORITY`
+- `NTFY_PRIORITY_KEYWORDS` (z. B. `Probealarm=1,MANV=4`)
 - `NTFY_AUTH_TOKEN`
 - `REQUEST_TIMEOUT`
 - `VERIFY_TLS`
 - `SHELLY_*` Variablen
+- `SHELLY_INPUT_EVENTS` (input-spezifische Titel/Texte)
+- `SHELLY_OUTPUT_LEVELS` (Output-Schaltung nach Alarmlevel)
+- `WEBHOOK_ENABLED`, `WEBHOOK_BIND`, `WEBHOOK_PORT`, `WEBHOOK_PATH`, `WEBHOOK_TOKEN`, `WEBHOOK_HEALTH_PATH`
 
 Beispiel:
 
@@ -55,6 +59,31 @@ NTFY_URL="https://ntfy.sh"
 NTFY_TOPIC="dein-zufaelliger-topic"
 # Optional bei geschütztem Topic:
 # NTFY_AUTH_TOKEN="<dein-ntfy-token>"
+# Optional: Priorität pro Stichwort im Titel überschreiben
+# Format: STICHWORT=PRIO,STICHWORT=PRIO
+# Es wird im TITEL gesucht (Stichwort muss im Titel enthalten sein).
+# Wenn mehrere Stichwörter passen, wird die höchste Prio verwendet.
+# Die eigentliche Meldung (Titel/Text) bleibt unverändert; es wird nur der Priority-Header gesetzt.
+# Beispiel: Probealarm -> 1, MANV -> 4
+# NTFY_PRIORITY_KEYWORDS="Probealarm=1,MANV=4"
+# Case-insensitive Teilstring-Match: auch "MANV-Alles" trifft auf "MANV".
+# Shelly Input-spezifische Meldungen:
+# Format: INPUT_ID=TITEL|TEXT,INPUT_ID=TITEL|TEXT
+# Beispiel: 0 und 1 lösen unterschiedliche Alarmtexte aus
+# SHELLY_INPUT_EVENTS="0=Einsatzanforderung|Eingang 0 ausgelöst,1=MANV Meldung|Eingang 1 ausgelöst"
+
+# Shelly Outputs nach Alarmlevel schalten:
+# Format: OUTPUT_ID=LEVEL|LEVEL,OUTPUT_ID=LEVEL|LEVEL
+# Beispiel: Output 0 bei Level 1/2, Output 1 bei Level 3/4/5
+# SHELLY_OUTPUT_LEVELS="0=1|2,1=3|4|5"
+
+# Optional: Webhook (Alarm von externem Rechner via curl auslösen)
+# WEBHOOK_ENABLED="true"
+# WEBHOOK_BIND="0.0.0.0"
+# WEBHOOK_PORT="8080"
+# WEBHOOK_PATH="/webhook/alarm"
+# WEBHOOK_TOKEN="dein-geheimer-token"
+# WEBHOOK_HEALTH_PATH="/healthz"
 ```
 
 ## Betrieb
@@ -72,6 +101,50 @@ cd divera-ntfy-gateway
 git pull
 sudo bash scripts/update.sh
 ```
+
+## Shelly Uni: Inputs + Outputs erweitern
+
+## Webhook: Alarm von anderem Rechner auslösen
+
+Wenn `WEBHOOK_ENABLED=true`, stellt der Service einen HTTP-Endpoint bereit.
+Du kannst dann von einem anderen Rechner per `curl` einen Alarm senden.
+
+Beispiel:
+
+```bash
+curl -X POST "http://<SERVER-IP>:8080/webhook/alarm" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"MANV extern","text":"Manueller Alarm","alarm_level":4}'
+```
+
+JSON-Felder:
+- `title` (Pflicht)
+- `text` (optional)
+- `alarm_level` (optional, numerisch; steuert auch Shelly-Output-Level-Mapping)
+- `address` (optional)
+
+Health/Metrics (ohne Auth, nur Lesezugriff):
+
+```bash
+curl "http://<SERVER-IP>:8080/healthz"
+```
+
+Liefert u. a. einfache Laufzeitmetriken (`push_sent`, `webhook_requests`, `webhook_error`, ...).
+
+Die ursprüngliche Meldung (Titel/Text) wird nicht verändert, sie wird so versendet wie übergeben.
+
+- **Inputs:** Mit `SHELLY_INPUT_EVENTS` kann jeder Eingang eine eigene Alarmierung (Titel/Text) auslösen.
+- **Outputs:** Mit `SHELLY_OUTPUT_LEVELS` lassen sich pro Output unterschiedliche Alarmlevel zuordnen.
+- Bei mehreren aktiven Alarmen wird der **höchste erkannte Alarmlevel** verwendet.
+- Wenn kein passender Alarmlevel aktiv ist, werden die konfigurierten Outputs ausgeschaltet.
+
+## Stabilität & Sicherheit (Hardening)
+
+- Thread-sichere State-Zugriffe per Lock für Polling + Webhook.
+- Laufzeit-Konfigurationsprüfung beim Start (`validate_runtime_config`).
+- Warnungen bei unsicheren Einstellungen (z. B. `VERIFY_TLS=false`, fehlendes `WEBHOOK_TOKEN`).
+- systemd-Service enthält zusätzliche Hardening-/Ressourcenoptionen (`MemoryMax`, `CPUQuota`, `TasksMax`, ...).
 
 ## Tests / Checks
 
