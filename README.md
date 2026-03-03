@@ -4,9 +4,7 @@ Pollt die DiVeRa-API auf neue Alarmierungen und sendet Push-Benachrichtigungen a
 
 ## Features
 
-- Polling von DiVeRa über:
-  - `https://divera247.com/api/v2/alarms`
-  - Fallback: `https://app.divera247.com/api/v2/pull/all`
+- Polling von DiVeRa über den Alarm-Endpunkt mit Primary/Fallback-Domain (`www.divera247.com` -> `divera247.com`)
 - Versand an ntfy (`NTFY_URL` + `NTFY_TOPIC`)
 - Optionaler ntfy Bearer-Token (`NTFY_AUTH_TOKEN`) für geschützte Topics
 - Dedup + State-Datei unter `/var/lib/alarm-gateway/state.json`
@@ -37,8 +35,8 @@ Pflicht:
 
 Optional:
 
-- `DIVERA_URL` (Default: `https://divera247.com/api/v2/alarms`)
-- `DIVERA_FALLBACK_URL` (Default: `https://app.divera247.com/api/v2/pull/all`)
+- `DIVERA_URL` (Default: `https://www.divera247.com/api/v2/alarms?accesskey=<API-Key>`)
+- `DIVERA_FALLBACK_URL` (Default: `https://divera247.com/api/v2/alarms?accesskey=<API-Key>`)
 - `POLL_SECONDS` (Default: `20`)
 - `STATE_FILE`
 - `NTFY_PRIORITY`
@@ -46,6 +44,8 @@ Optional:
 - `REQUEST_TIMEOUT`
 - `VERIFY_TLS`
 - `SHELLY_*` Variablen
+
+URL-Format: `https://www.divera247.com/api/v2/alarms?accesskey=<API-Key>`
 
 Beispiel:
 
@@ -101,8 +101,8 @@ Keine Pushs:
 - Bei 401/403: `NTFY_AUTH_TOKEN` setzen
 - DiVeRa testen:
   ```bash
+  curl -L "https://www.divera247.com/api/v2/alarms?accesskey=DEIN_KEY"
   curl -L "https://divera247.com/api/v2/alarms?accesskey=DEIN_KEY"
-  curl "https://app.divera247.com/api/v2/pull/all?accesskey=DEIN_KEY"
   python3 alarm_gateway.py --check-divera-alarm --check-json
   ```
 - Wenn `DIVERA_ACCESSKEY` noch auf `PASTE_YOUR_DIVERA_ACCESSKEY_HERE` steht, wird nicht gepollt.
