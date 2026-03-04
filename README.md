@@ -10,11 +10,12 @@ Die README ist so aufgebaut, dass du das Projekt auch ohne Vorwissen schnell bet
 
 ## Für wen ist das gedacht?
 
-Für Feuerwehren, Hilfsorganisationen oder IT-Verantwortliche, die:
+Für alle, die **ohne Google-Dienste** arbeiten möchten:
 
-- DiVeRa-Alarme zentral abgreifen möchten,
-- diese über ntfy verteilen wollen,
-- optional ein hochverfügbares Setup mit mehreren Standorten betreiben.
+- Die DiVeRa-App nutzt für ihre Push-Alarmierung Google FCM (Firebase Cloud Messaging), was in manchen Umgebungen nicht gewünscht oder nicht zulässig ist.
+- Dieses Gateway holt Alarme zentral über die DiVeRa-API ab und verteilt sie über ntfy – unabhängig von Google Push-Infrastruktur.
+- Damit kannst du eigene, datensparsame Benachrichtigungswege aufbauen (z. B. self-hosted ntfy).
+- Optional lässt sich das Ganze hochverfügbar mit mehreren Standorten bzw. Nodes betreiben.
 
 ---
 
@@ -127,6 +128,7 @@ NTFY_PRIORITY_KEYWORDS="Probealarm=1,MANV=4"
 - Der Node mit der höchsten `NODE_PRIORITY` ist aktiv und sendet.
 - Andere Nodes bleiben im Standby.
 - Bei gleicher Priorität entscheidet `NODE_ID`.
+- Wertebereich für `NODE_PRIORITY`: `1` = niedrigste Priorität, `100` = höchste Priorität.
 
 Beispiel:
 
