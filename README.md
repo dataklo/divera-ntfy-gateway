@@ -1,189 +1,95 @@
 # divera-ntfy-gateway
 
-Pollt die DiVeRa-API auf neue Alarmierungen und sendet Push-Benachrichtigungen an einen **ntfy**-Topic.
+DiVeRa Polling + Webhook Trigger + HA-Failover für ntfy.
 
-## Features
+## Was jetzt zusätzlich drin ist (alle 5 Punkte)
 
-- Polling von DiVeRa über den Alarm-Endpunkt mit Primary/Fallback-Domain (`www.divera247.com` -> `divera247.com`)
-- Versand an ntfy (`NTFY_URL` + `NTFY_TOPIC`)
-- Optionaler ntfy Bearer-Token (`NTFY_AUTH_TOKEN`) für geschützte Topics
-- Dedup + State-Datei unter `/var/lib/alarm-gateway/state.json`
-- Optionales Shelly Plus Uni Input-Polling
-- One-shot Check: `--check-divera-alarm`
+1. **Cluster-Schutz zwischen Standorten** über optionales `CLUSTER_SHARED_TOKEN` (Peer-Health nur mit Token).  
+2. **Replay-Schutz für Webhook-Trigger** via `ts` + `sig` (HMAC-SHA256), optional aktivierbar.  
+3. **Retry + Queue bei ntfy-Ausfall** (wird gepuffert und später nachgesendet).  
+4. **Prometheus-Metriken** über separaten Metrics-Endpunkt (`HEALTH_METRICS_PATH`).  
+5. **Audit-Log** als JSON-Lines (`AUDIT_LOG_FILE`).
 
-## Installation
+## Kernkonfiguration
 
-```bash
-git clone https://github.com/dataklo/divera-ntfy-gateway.git
-cd divera-ntfy-gateway
-sudo bash scripts/install.sh
-```
+- `NODE_ID` eindeutiger Name
+- `NODE_PRIORITY` 1–100 (100 = höchste Priorität)
+- `PEER_NODES` unterstützt **IP oder Domain inkl. Port**, z. B.:
+  - `10.8.0.12:8081`
+  - `ntfy.dataklo.de:8084`
+- `WEBHOOK_PORT` für Trigger/API/UI
+- `HEALTH_PORT` separat für Health/Metrics (sollte ≠ `WEBHOOK_PORT`)
 
-## Konfiguration
+## NTFY Fallback Server (Antwort auf deine Frage)
 
-Datei:
+**Ja, das ist absolut sinnvoll** und jetzt direkt unterstützt:
 
-```bash
-/etc/alarm-gateway/alarm-gateway.env
-```
+- Primär: `NTFY_URL`
+- Fallbacks: `NTFY_FALLBACK_URLS` (kommagetrennt)
+- Retries: `NTFY_RETRY_ATTEMPTS`, `NTFY_RETRY_DELAY_SECONDS`
 
-Pflicht:
-
-- `DIVERA_ACCESSKEY`
-- `NTFY_URL`
-- `NTFY_TOPIC`
-
-Optional:
-
-- `DIVERA_URL` (Default: `https://www.divera247.com/api/v2/alarms?accesskey=<API-Key>`)
-- `DIVERA_FALLBACK_URL` (Default: `https://divera247.com/api/v2/alarms?accesskey=<API-Key>`)
-- `POLL_SECONDS` (Default: `20`)
-- `STATE_FILE`
-- `NTFY_PRIORITY`
-- `NTFY_PRIORITY_KEYWORDS` (z. B. `Probealarm=1,MANV=4`)
-- `NTFY_AUTH_TOKEN`
-- `REQUEST_TIMEOUT`
-- `VERIFY_TLS`
-- `SHELLY_*` Variablen
-- `SHELLY_INPUT_EVENTS` (input-spezifische Titel/Texte)
-- `SHELLY_OUTPUT_LEVELS` (Output-Schaltung nach Alarmlevel)
-- `WEBHOOK_ENABLED`, `WEBHOOK_BIND`, `WEBHOOK_PORT`, `WEBHOOK_PATH`, `WEBHOOK_TOKEN`, `WEBHOOK_HEALTH_PATH`
-
-URL-Format: `https://www.divera247.com/api/v2/alarms?accesskey=<API-Key>`
+Wenn der primäre ntfy-Server nicht erreichbar ist, wird automatisch auf Fallback-Ziele gewechselt.
 
 Beispiel:
 
 ```env
-DIVERA_ACCESSKEY="DEIN_DIVERA_KEY"
-NTFY_URL="https://ntfy.sh"
-NTFY_TOPIC="dein-zufaelliger-topic"
-# Optional bei geschütztem Topic:
-# NTFY_AUTH_TOKEN="<dein-ntfy-token>"
-# Optional: Priorität pro Stichwort im Titel überschreiben
-# Format: STICHWORT=PRIO,STICHWORT=PRIO
-# Es wird im TITEL gesucht (Stichwort muss im Titel enthalten sein).
-# Wenn mehrere Stichwörter passen, wird die höchste Prio verwendet.
-# Die eigentliche Meldung (Titel/Text) bleibt unverändert; es wird nur der Priority-Header gesetzt.
-# Beispiel: Probealarm -> 1, MANV -> 4
-# NTFY_PRIORITY_KEYWORDS="Probealarm=1,MANV=4"
-# Case-insensitive Teilstring-Match: auch "MANV-Alles" trifft auf "MANV".
-# Shelly Input-spezifische Meldungen:
-# Format: INPUT_ID=TITEL|TEXT,INPUT_ID=TITEL|TEXT
-# Beispiel: 0 und 1 lösen unterschiedliche Alarmtexte aus
-# SHELLY_INPUT_EVENTS="0=Einsatzanforderung|Eingang 0 ausgelöst,1=MANV Meldung|Eingang 1 ausgelöst"
-
-# Shelly Outputs nach Alarmlevel schalten:
-# Format: OUTPUT_ID=LEVEL|LEVEL,OUTPUT_ID=LEVEL|LEVEL
-# Beispiel: Output 0 bei Level 1/2, Output 1 bei Level 3/4/5
-# SHELLY_OUTPUT_LEVELS="0=1|2,1=3|4|5"
-
-# Optional: Webhook (Alarm von externem Rechner via curl auslösen)
-# WEBHOOK_ENABLED="true"
-# WEBHOOK_BIND="0.0.0.0"
-# WEBHOOK_PORT="8080"
-# WEBHOOK_PATH="/webhook/alarm"
-# WEBHOOK_TOKEN="dein-geheimer-token"
-# WEBHOOK_HEALTH_PATH="/healthz"
+NTFY_URL="https://ntfy-primary.example.de"
+NTFY_FALLBACK_URLS="https://ntfy-backup1.example.de,https://ntfy-backup2.example.de"
+NTFY_RETRY_ATTEMPTS="3"
+NTFY_RETRY_DELAY_SECONDS="1.0"
 ```
 
-## Betrieb
+## Case-insensitive Keyword Matching
 
-```bash
-sudo systemctl restart alarm-gateway
-sudo systemctl status alarm-gateway --no-pager
-sudo journalctl -u alarm-gateway -f
-```
-
-## Update
-
-```bash
-cd divera-ntfy-gateway
-git pull
-sudo bash scripts/update.sh
-```
-
-## Shelly Uni: Inputs + Outputs erweitern
-
-## Webhook: Alarm von anderem Rechner auslösen
-
-Wenn `WEBHOOK_ENABLED=true`, stellt der Service einen HTTP-Endpoint bereit.
-Du kannst dann von einem anderen Rechner per `curl` einen Alarm senden.
+`NTFY_PRIORITY_KEYWORDS` ist vollständig case-insensitive (`casefold()`), also z. B. `MANV`, `manv`, `ManV`, `mAnV` sind identisch.
 
 Beispiel:
 
+```env
+NTFY_PRIORITY_KEYWORDS="Probealarm=1,MANV=4"
+```
+
+## HA-Verhalten
+
+- Der Node mit der höchsten `NODE_PRIORITY` sendet DiVeRa-Alarme.
+- Andere Nodes bleiben Standby (kein doppeltes Senden).
+- Bei gleicher Priorität entscheidet `NODE_ID` als Tie-Breaker.
+
+## Endpunkte
+
+Bei `WEBHOOK_PORT=8080`, `HEALTH_PORT=8081`:
+
+- POST JSON: `http://<HOST>:8080/webhook/alarm`
+- GET Trigger: `http://<HOST>:8080/webhook/trigger?...`
+- UI: `http://<HOST>:8080/`
+- Health: `http://<HOST>:8081/healthz`
+- Prometheus: `http://<HOST>:8081/metrics`
+
+## Replay-Schutz (optional)
+
+Aktivieren:
+
+```env
+WEBHOOK_REPLAY_PROTECTION="true"
+WEBHOOK_HMAC_SECRET="<secret>"
+WEBHOOK_MAX_SKEW_SECONDS="120"
+```
+
+Dann muss der Trigger `ts` und `sig` enthalten (oder Header `X-Webhook-Timestamp`, `X-Webhook-Signature`).
+
+## Beispiel cURL
+
 ```bash
-curl -X POST "http://<SERVER-IP>:8080/webhook/alarm" \
-  -H "Authorization: Bearer <TOKEN>" \
+curl -X POST "http://<HOST>:8080/webhook/alarm" \
   -H "Content-Type: application/json" \
-  -d '{"title":"MANV extern","text":"Manueller Alarm","alarm_level":4}'
+  -d '{"title":"MANV extern","text":"Alarm von Standort B","address":"Musterstr. 1","priority":4}'
 ```
-
-JSON-Felder:
-- `title` (Pflicht)
-- `text` (optional)
-- `alarm_level` (optional, numerisch; steuert auch Shelly-Output-Level-Mapping)
-- `address` (optional)
-
-Health/Metrics (ohne Auth, nur Lesezugriff):
 
 ```bash
-curl "http://<SERVER-IP>:8080/healthz"
+curl "http://<HOST>:8080/webhook/trigger?title=Einsatz%20extern&text=URL%20Trigger&address=Hauptstrasse%201&priority=4"
 ```
-
-Liefert u. a. einfache Laufzeitmetriken (`push_sent`, `webhook_requests`, `webhook_error`, ...).
-
-Die ursprüngliche Meldung (Titel/Text) wird nicht verändert, sie wird so versendet wie übergeben.
-
-- **Inputs:** Mit `SHELLY_INPUT_EVENTS` kann jeder Eingang eine eigene Alarmierung (Titel/Text) auslösen.
-- **Outputs:** Mit `SHELLY_OUTPUT_LEVELS` lassen sich pro Output unterschiedliche Alarmlevel zuordnen.
-- Bei mehreren aktiven Alarmen wird der **höchste erkannte Alarmlevel** verwendet.
-- Wenn kein passender Alarmlevel aktiv ist, werden die konfigurierten Outputs ausgeschaltet.
-
-## Stabilität & Sicherheit (Hardening)
-
-- Thread-sichere State-Zugriffe per Lock für Polling + Webhook.
-- Laufzeit-Konfigurationsprüfung beim Start (`validate_runtime_config`).
-- Warnungen bei unsicheren Einstellungen (z. B. `VERIFY_TLS=false`, fehlendes `WEBHOOK_TOKEN`).
-- systemd-Service enthält zusätzliche Hardening-/Ressourcenoptionen (`MemoryMax`, `CPUQuota`, `TasksMax`, ...).
-
-## Tests / Checks
-
-Test-Push:
 
 ```bash
-cd /opt/alarm-gateway
-source venv/bin/activate
-python3 alarm_gateway.py --test-push --test-title "Probealarm" --test-text "Testtext"
+curl "http://<HOST>:8081/healthz"
+curl "http://<HOST>:8081/metrics"
 ```
-
-DiVeRa One-shot Check:
-
-```bash
-python3 alarm_gateway.py --check-divera-alarm --check-json
-# Liest automatisch /etc/alarm-gateway/alarm-gateway.env (falls vorhanden)
-```
-
-## Troubleshooting
-
-Keine Pushs:
-
-- Direkt ntfy testen:
-  ```bash
-  curl -d "test" https://DEIN-NTFY-SERVER/DEIN-TOPIC
-  ```
-- Bei 401/403: `NTFY_AUTH_TOKEN` setzen
-- DiVeRa testen:
-  ```bash
-  curl -L "https://www.divera247.com/api/v2/alarms?accesskey=DEIN_KEY"
-  curl -L "https://divera247.com/api/v2/alarms?accesskey=DEIN_KEY"
-  python3 alarm_gateway.py --check-divera-alarm --check-json
-  ```
-- Wenn `DIVERA_ACCESSKEY` noch auf `PASTE_YOUR_DIVERA_ACCESSKEY_HERE` steht, wird nicht gepollt.
-- Wenn `Missing push target` erscheint: `NTFY_URL` und `NTFY_TOPIC` setzen.
-- Nach Änderungen an `/etc/alarm-gateway/alarm-gateway.env` immer neu starten: `sudo systemctl restart alarm-gateway`.
-- CLI-Checks laden standardmäßig `/etc/alarm-gateway/alarm-gateway.env`; alternativ Pfad setzen mit `ALARM_GATEWAY_ENV_FILE=/pfad/zur.env`.
-- Logs prüfen: `journalctl -u alarm-gateway -f`
-
-## Lizenz
-
-MIT
