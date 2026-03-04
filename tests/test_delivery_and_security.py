@@ -47,6 +47,23 @@ class DeliveryAndSecurityTests(unittest.TestCase):
         sig = self.module._build_webhook_signature(payload, ts)
         self.assertTrue(sig)
 
+    def test_enforce_webhook_security_accepts_payload_token(self):
+        os.environ['WEBHOOK_TOKEN'] = 'token123'
+        os.environ['WEBHOOK_REPLAY_PROTECTION'] = 'false'
+        import alarm_gateway
+        module = importlib.reload(alarm_gateway)
+
+        module._enforce_webhook_security({}, {}, {'token': 'token123'})
+
+    def test_enforce_webhook_security_rejects_unauthorized_payload(self):
+        os.environ['WEBHOOK_TOKEN'] = 'token123'
+        os.environ['WEBHOOK_REPLAY_PROTECTION'] = 'false'
+        import alarm_gateway
+        module = importlib.reload(alarm_gateway)
+
+        with self.assertRaises(PermissionError):
+            module._enforce_webhook_security({}, {}, {'title': 'demo'})
+
 
 if __name__ == '__main__':
     unittest.main()

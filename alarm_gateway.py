@@ -1016,6 +1016,18 @@ def _is_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
     return str(query_params.get("token", "")).strip() == WEBHOOK_TOKEN
 
 
+def _enforce_webhook_security(headers: Any, query_params: Dict[str, str], replay_data: Dict[str, Any]) -> None:
+    auth_params = dict(query_params)
+    payload_token = str(replay_data.get("token", "")).strip()
+    if payload_token and not str(auth_params.get("token", "")).strip():
+        auth_params["token"] = payload_token
+
+    if not _is_authorized(headers, auth_params):
+        raise PermissionError("unauthorized")
+
+    _verify_replay_guard(replay_data, headers)
+
+
 def _is_cluster_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
     if not CLUSTER_SHARED_TOKEN:
         return True
@@ -1052,14 +1064,13 @@ def make_webhook_handler(state: Dict[str, Any]):
 
             if request_path == WEBHOOK_TRIGGER_PATH:
                 metric_inc("webhook_requests")
-                if not _is_authorized(self.headers, query_params):
-                    metric_inc("webhook_error")
-                    self._send_json(401, {"error": "unauthorized"})
-                    return
                 try:
-                    _verify_replay_guard(query_params, self.headers)
+                    _enforce_webhook_security(self.headers, query_params, query_params)
                     result = handle_webhook_alarm(query_params, state)
                     self._send_json(200, result)
+                except PermissionError as exc:
+                    metric_inc("webhook_error")
+                    self._send_json(401, {"error": str(exc)})
                 except Exception as exc:
                     metric_inc("webhook_error")
                     self._send_json(400, {"error": str(exc)})
@@ -1073,11 +1084,6 @@ def make_webhook_handler(state: Dict[str, Any]):
             if request_path == WEBHOOK_PATH:
                 metric_inc("webhook_requests")
 
-                if not _is_authorized(self.headers, query_params):
-                    metric_inc("webhook_error")
-                    self._send_json(401, {"error": "unauthorized"})
-                    return
-
                 content_length = int(self.headers.get("Content-Length", "0") or "0")
                 body = self.rfile.read(content_length)
                 try:
@@ -1088,9 +1094,12 @@ def make_webhook_handler(state: Dict[str, Any]):
                         payload = json.loads(body.decode("utf-8")) if body else {}
                     if not isinstance(payload, dict):
                         raise ValueError("Payload must be an object")
-                    _verify_replay_guard(payload, self.headers)
+                    _enforce_webhook_security(self.headers, query_params, payload)
                     result = handle_webhook_alarm(payload, state)
                     self._send_json(200, result)
+                except PermissionError as exc:
+                    metric_inc("webhook_error")
+                    self._send_json(401, {"error": str(exc)})
                 except Exception as exc:
                     metric_inc("webhook_error")
                     self._send_json(400, {"error": str(exc)})
@@ -1102,8 +1111,12 @@ def make_webhook_handler(state: Dict[str, Any]):
                 body = self.rfile.read(content_length)
                 try:
                     payload = parse_form_urlencoded(body)
+                    _enforce_webhook_security(self.headers, query_params, payload)
                     handle_webhook_alarm(payload, state)
                     self._send_html(200, render_web_form_page("Alarm wurde gesendet."))
+                except PermissionError as exc:
+                    metric_inc("webhook_error")
+                    self._send_html(401, render_web_form_page(f"Fehler: {exc}", error=True))
                 except Exception as exc:
                     metric_inc("webhook_error")
                     self._send_html(400, render_web_form_page(f"Fehler: {exc}", error=True))
