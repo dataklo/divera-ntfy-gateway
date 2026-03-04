@@ -1,36 +1,98 @@
-# divera-ntfy-gateway
+# DiVeRa ↔ ntfy Gateway
 
-DiVeRa Polling + Webhook Trigger + HA-Failover für ntfy.
+Dieses Projekt verbindet **DiVeRa 24/7** mit **ntfy**:
 
-## Was jetzt zusätzlich drin ist (alle 5 Punkte)
+- Das Gateway pollt Alarme aus DiVeRa.
+- Neue Alarme werden als Push an ein ntfy-Topic gesendet.
+- Optional kannst du Alarme zusätzlich per Webhook auslösen.
 
-1. **Cluster-Schutz zwischen Standorten** über optionales `CLUSTER_SHARED_TOKEN` (Peer-Health nur mit Token).  
-2. **Replay-Schutz für Webhook-Trigger** via `ts` + `sig` (HMAC-SHA256), optional aktivierbar.  
-3. **Retry + Queue bei ntfy-Ausfall** (wird gepuffert und später nachgesendet).  
-4. **Prometheus-Metriken** über separaten Metrics-Endpunkt (`HEALTH_METRICS_PATH`).  
-5. **Audit-Log** als JSON-Lines (`AUDIT_LOG_FILE`).
+Die README ist so aufgebaut, dass du das Projekt auch ohne Vorwissen schnell betreiben kannst.
 
-## Kernkonfiguration
+## Für wen ist das gedacht?
 
-- `NODE_ID` eindeutiger Name
-- `NODE_PRIORITY` 1–100 (100 = höchste Priorität)
-- `PEER_NODES` unterstützt **IP oder Domain inkl. Port**, z. B.:
-  - `10.8.0.12:8081`
-  - `ntfy.dataklo.de:8084`
-- `WEBHOOK_PORT` für Trigger/API/UI
-- `HEALTH_PORT` separat für Health/Metrics (sollte ≠ `WEBHOOK_PORT`)
+Für Feuerwehren, Hilfsorganisationen oder IT-Verantwortliche, die:
 
-## NTFY Fallback Server (Antwort auf deine Frage)
+- DiVeRa-Alarme zentral abgreifen möchten,
+- diese über ntfy verteilen wollen,
+- optional ein hochverfügbares Setup mit mehreren Standorten betreiben.
 
-**Ja, das ist absolut sinnvoll** und jetzt direkt unterstützt:
+---
 
-- Primär: `NTFY_URL`
-- Fallbacks: `NTFY_FALLBACK_URLS` (kommagetrennt)
-- Retries: `NTFY_RETRY_ATTEMPTS`, `NTFY_RETRY_DELAY_SECONDS`
+## Features im Überblick
 
-Wenn der primäre ntfy-Server nicht erreichbar ist, wird automatisch auf Fallback-Ziele gewechselt.
+- **DiVeRa Polling** mit einstellbarem Intervall.
+- **ntfy Versand** inkl. Token-Auth.
+- **Fallback-ntfy-Server** und Retry-Logik bei Ausfällen.
+- **Cluster-/HA-Modus**: nur der aktive Node sendet, die anderen bleiben Standby.
+- **Webhook-Endpunkte** (POST + einfacher GET-Trigger) für externe Systeme.
+- **Optionaler Replay-Schutz** (HMAC + Timestamp) für Webhook-Requests.
+- **Health- und Prometheus-Metriken** auf separatem Port.
+- **Audit-Logging** als JSON-Lines.
+- **Keyword-basierte Priorität** (case-insensitive), z. B. `MANV=4`.
 
-Beispiel:
+---
+
+## Schnellstart (empfohlen mit systemd)
+
+### 1) Voraussetzungen
+
+- Debian/Ubuntu-ähnliches Linux mit systemd
+- Root-Rechte
+- Netzwerkzugriff auf:
+  - DiVeRa API
+  - ntfy Server
+
+### 2) Installation
+
+Im Repo-Verzeichnis:
+
+```bash
+sudo bash scripts/install.sh
+```
+
+Das Script installiert Abhängigkeiten, richtet den Dienst ein und legt eine Beispiel-Konfiguration unter
+`/etc/alarm-gateway/alarm-gateway.env` an.
+
+### 3) Konfiguration anpassen
+
+```bash
+sudo nano /etc/alarm-gateway/alarm-gateway.env
+```
+
+Mindestens diese Werte setzen:
+
+```env
+DIVERA_ACCESSKEY="<dein-divera-accesskey>"
+NTFY_URL="https://ntfy.example.com"
+NTFY_TOPIC="<dein-topic>"
+```
+
+### 4) Dienst neu starten
+
+```bash
+sudo systemctl restart alarm-gateway
+sudo systemctl status alarm-gateway
+```
+
+### 5) Logs prüfen
+
+```bash
+journalctl -u alarm-gateway -f
+```
+
+---
+
+## Wichtige Konfigurationen
+
+### Pflichtwerte
+
+- `DIVERA_ACCESSKEY`: API-Key für DiVeRa
+- `NTFY_URL`: Basis-URL deines ntfy Servers
+- `NTFY_TOPIC`: Ziel-Topic für Push-Nachrichten
+
+### ntfy Robustheit / Fallback
+
+Wenn dein primärer ntfy-Server nicht erreichbar ist, können automatisch Fallback-Server verwendet werden.
 
 ```env
 NTFY_URL="https://ntfy-primary.example.de"
@@ -39,23 +101,45 @@ NTFY_RETRY_ATTEMPTS="3"
 NTFY_RETRY_DELAY_SECONDS="1.0"
 ```
 
-## Case-insensitive Keyword Matching
+### Prioritäten über Keywords
 
-`NTFY_PRIORITY_KEYWORDS` ist vollständig case-insensitive (`casefold()`), also z. B. `MANV`, `manv`, `ManV`, `mAnV` sind identisch.
+`NTFY_PRIORITY_KEYWORDS` arbeitet **case-insensitive**. `MANV`, `manv` oder `ManV` werden gleich behandelt.
+
+```env
+NTFY_DEFAULT_PRIORITY="3"
+NTFY_PRIORITY_KEYWORDS="Probealarm=1,MANV=4"
+```
+
+### Cluster / HA (mehrere Standorte)
+
+- Der Node mit der höchsten `NODE_PRIORITY` ist aktiv und sendet.
+- Andere Nodes bleiben im Standby.
+- Bei gleicher Priorität entscheidet `NODE_ID`.
 
 Beispiel:
 
 ```env
-NTFY_PRIORITY_KEYWORDS="Probealarm=1,MANV=4"
+NODE_ID="gateway-standort-a"
+NODE_PRIORITY="100"
+PEER_NODES="10.8.0.12:8081,gateway-b.example.de:8081"
+CLUSTER_SHARED_TOKEN="<optional-shared-secret>"
 ```
 
-## HA-Verhalten
+---
 
-- Der Node mit der höchsten `NODE_PRIORITY` sendet DiVeRa-Alarme.
-- Andere Nodes bleiben Standby (kein doppeltes Senden).
-- Bei gleicher Priorität entscheidet `NODE_ID` als Tie-Breaker.
+## Webhook-Nutzung
 
-## Endpunkte
+Webhook-Funktion aktivieren:
+
+```env
+WEBHOOK_ENABLED="true"
+WEBHOOK_PORT="8080"
+WEBHOOK_PATH="/webhook/alarm"
+WEBHOOK_TRIGGER_PATH="/webhook/trigger"
+WEBHOOK_TOKEN="<optional-token>"
+```
+
+### Endpunkte (Beispiel)
 
 Bei `WEBHOOK_PORT=8080`, `HEALTH_PORT=8081`:
 
@@ -63,21 +147,11 @@ Bei `WEBHOOK_PORT=8080`, `HEALTH_PORT=8081`:
 - GET Trigger: `http://<HOST>:8080/webhook/trigger?...`
 - UI: `http://<HOST>:8080/`
 - Health: `http://<HOST>:8081/healthz`
-- Prometheus: `http://<HOST>:8081/metrics`
+- Metrics: `http://<HOST>:8081/metrics`
 
-## Replay-Schutz (optional)
+### Beispiel-Requests
 
-Aktivieren:
-
-```env
-WEBHOOK_REPLAY_PROTECTION="true"
-WEBHOOK_HMAC_SECRET="<secret>"
-WEBHOOK_MAX_SKEW_SECONDS="120"
-```
-
-Dann muss der Trigger `ts` und `sig` enthalten (oder Header `X-Webhook-Timestamp`, `X-Webhook-Signature`).
-
-## Beispiel cURL
+POST:
 
 ```bash
 curl -X POST "http://<HOST>:8080/webhook/alarm" \
@@ -85,11 +159,83 @@ curl -X POST "http://<HOST>:8080/webhook/alarm" \
   -d '{"title":"MANV extern","text":"Alarm von Standort B","address":"Musterstr. 1","priority":4}'
 ```
 
+GET-Trigger:
+
 ```bash
 curl "http://<HOST>:8080/webhook/trigger?title=Einsatz%20extern&text=URL%20Trigger&address=Hauptstrasse%201&priority=4"
 ```
 
-```bash
-curl "http://<HOST>:8081/healthz"
-curl "http://<HOST>:8081/metrics"
+---
+
+## Replay-Schutz für Webhooks (optional)
+
+Wenn Webhooks aus externen Netzen kommen, solltest du Replay-Schutz aktivieren:
+
+```env
+WEBHOOK_REPLAY_PROTECTION="true"
+WEBHOOK_HMAC_SECRET="<secret>"
+WEBHOOK_MAX_SKEW_SECONDS="120"
 ```
+
+Dann muss der Aufruf einen Timestamp (`ts`) und eine Signatur (`sig`) enthalten
+(oder die Header `X-Webhook-Timestamp` und `X-Webhook-Signature`).
+
+---
+
+## Betrieb, Updates, Deinstallation
+
+### Update
+
+```bash
+sudo bash scripts/update.sh
+```
+
+### Deinstallation
+
+```bash
+sudo bash scripts/uninstall.sh
+```
+
+---
+
+## Troubleshooting
+
+- **Dienst startet nicht:**
+  - `systemctl status alarm-gateway`
+  - `journalctl -u alarm-gateway -n 200 --no-pager`
+- **Keine Push-Nachrichten:**
+  - `NTFY_URL`, `NTFY_TOPIC`, `NTFY_AUTH_TOKEN` prüfen
+  - Erreichbarkeit des ntfy-Servers testen
+- **Cluster sendet doppelt:**
+  - `NODE_ID` je Node eindeutig setzen
+  - `NODE_PRIORITY` sauber abstimmen
+  - `PEER_NODES` inkl. korrektem Health-Port prüfen
+
+---
+
+## Projektstruktur (kurz)
+
+- `alarm_gateway.py` – Hauptanwendung
+- `scripts/install.sh` – Installation als systemd-Service
+- `scripts/update.sh` – Update
+- `scripts/uninstall.sh` – Deinstallation
+- `systemd/alarm-gateway.service` – systemd Unit
+- `tests/` – automatisierte Tests
+
+Wenn du möchtest, kann ich als nächsten Schritt auch eine **komplette Beispiel-Konfiguration für Single-Node** und eine **für 2-Node-HA** direkt in die README ergänzen.
+
+---
+
+## Haftungsausschluss
+
+Dieses Projekt ist ein **privates Freizeit-/Hobbyprojekt**.
+Die Nutzung erfolgt vollständig **auf eigene Verantwortung**.
+
+Es wird **keine Haftung** übernommen, insbesondere nicht für:
+
+- direkte oder indirekte Schäden,
+- Datenverlust,
+- Fehlalarme, ausbleibende Alarme oder verspätete Benachrichtigungen,
+- Folgeschäden durch Fehlkonfiguration, Ausfall von Drittanbietern (z. B. DiVeRa/ntfy) oder Systemstörungen.
+
+Bitte prüfe das Verhalten vor dem produktiven Einsatz gründlich in einer Testumgebung und sorge für geeignete Fallback-Prozesse.
