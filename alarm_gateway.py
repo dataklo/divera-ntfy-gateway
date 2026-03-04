@@ -11,6 +11,7 @@ systemd setup, env vars are stored in /etc/alarm-gateway/alarm-gateway.env.
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import threading
@@ -89,37 +90,43 @@ STATE_FILE = env("STATE_FILE", "/var/lib/alarm-gateway/state.json")
 NTFY_URL = env("NTFY_URL", "").rstrip("/")
 NTFY_TOPIC = env("NTFY_TOPIC", "")
 NTFY_PRIORITY = env("NTFY_PRIORITY", "5")
-NTFY_STANDARD_PRIORITY = env("NTFY_STANDARD_PRIORITY", "3")
+NTFY_DEFAULT_PRIORITY = env("NTFY_DEFAULT_PRIORITY", NTFY_PRIORITY)
 NTFY_PRIORITY_KEYWORDS = env("NTFY_PRIORITY_KEYWORDS", "")
 NTFY_AUTH_TOKEN = env("NTFY_AUTH_TOKEN", "")
+NTFY_FALLBACK_URLS = env("NTFY_FALLBACK_URLS", "")
+NTFY_RETRY_ATTEMPTS = int(env("NTFY_RETRY_ATTEMPTS", "2"))
+NTFY_RETRY_DELAY_SECONDS = float(env("NTFY_RETRY_DELAY_SECONDS", "1.5"))
 
 REQUEST_TIMEOUT = float(env("REQUEST_TIMEOUT", "15"))
 VERIFY_TLS = env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
 DEBUG_DIVERA = env("DEBUG_DIVERA", "false").lower() in ("1", "true", "yes", "on")
 
-SHELLY_UNI_URL = env("SHELLY_UNI_URL", "").rstrip("/")
-SHELLY_INPUT_IDS = [
-    int(x.strip())
-    for x in env("SHELLY_INPUT_IDS", "0,1").split(",")
-    if x.strip()
-]
-SHELLY_POLL_SECONDS = float(env("SHELLY_POLL_SECONDS", "1"))
-SHELLY_TRIGGER_ON = env("SHELLY_TRIGGER_ON", "1").lower() not in ("0", "false", "no")
-SHELLY_DEBOUNCE_SECONDS = float(env("SHELLY_DEBOUNCE_SECONDS", "10"))
-SHELLY_TITLE_TEMPLATE = env("SHELLY_TITLE_TEMPLATE", "Shelly Input {input_id}")
-SHELLY_MESSAGE_TEMPLATE = env(
-    "SHELLY_MESSAGE_TEMPLATE",
-    "Shelly Plus Uni Eingang {input_id} wurde ausgelöst.",
-)
-SHELLY_INPUT_EVENTS = env("SHELLY_INPUT_EVENTS", "")
-SHELLY_OUTPUT_LEVELS = env("SHELLY_OUTPUT_LEVELS", "")
 
 WEBHOOK_ENABLED = env("WEBHOOK_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 WEBHOOK_BIND = env("WEBHOOK_BIND", "0.0.0.0")
 WEBHOOK_PORT = int(env("WEBHOOK_PORT", "8080"))
 WEBHOOK_PATH = env("WEBHOOK_PATH", "/webhook/alarm")
 WEBHOOK_TOKEN = env("WEBHOOK_TOKEN", "")
-WEBHOOK_HEALTH_PATH = env("WEBHOOK_HEALTH_PATH", "/healthz")
+WEBHOOK_UI_PATH = env("WEBHOOK_UI_PATH", "/")
+WEBHOOK_TRIGGER_PATH = env("WEBHOOK_TRIGGER_PATH", "/webhook/trigger")
+WEBHOOK_REPLAY_PROTECTION = env("WEBHOOK_REPLAY_PROTECTION", "false").lower() in ("1", "true", "yes", "on")
+WEBHOOK_MAX_SKEW_SECONDS = int(env("WEBHOOK_MAX_SKEW_SECONDS", "120"))
+WEBHOOK_HMAC_SECRET = env("WEBHOOK_HMAC_SECRET", "")
+
+HEALTH_ENABLED = env("HEALTH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+HEALTH_BIND = env("HEALTH_BIND", "0.0.0.0")
+HEALTH_PORT = int(env("HEALTH_PORT", "8081"))
+HEALTH_PATH = env("HEALTH_PATH", env("WEBHOOK_HEALTH_PATH", "/healthz"))
+HEALTH_METRICS_PATH = env("HEALTH_METRICS_PATH", "/metrics")
+
+NODE_ID = env("NODE_ID", os.uname().nodename)
+NODE_PRIORITY = int(env("NODE_PRIORITY", "100"))
+PEER_NODES = env("PEER_NODES", "")
+CLUSTER_PING_TIMEOUT = float(env("CLUSTER_PING_TIMEOUT", "2"))
+CLUSTER_STATUS_TTL_SECONDS = float(env("CLUSTER_STATUS_TTL_SECONDS", "5"))
+CLUSTER_SHARED_TOKEN = env("CLUSTER_SHARED_TOKEN", "")
+
+AUDIT_LOG_FILE = env("AUDIT_LOG_FILE", "")
 
 STATE_LOCK = threading.RLock()  # reentrant: some locked paths update metrics
 RUNTIME_METRICS: Dict[str, int] = {
@@ -129,7 +136,7 @@ RUNTIME_METRICS: Dict[str, int] = {
     "webhook_requests": 0,
     "webhook_success": 0,
     "webhook_error": 0,
-    "shelly_output_switches": 0,
+    "cluster_standby_skip": 0,
 }
 
 
@@ -163,68 +170,8 @@ def parse_priority_keyword_map(raw_value: str) -> List[Tuple[str, str]]:
 PRIORITY_KEYWORD_MAP = parse_priority_keyword_map(NTFY_PRIORITY_KEYWORDS)
 
 
-def parse_input_event_map(raw_value: str) -> Dict[int, Tuple[str, str]]:
-    """Parse input-specific title/message map from 'id=title|message,id=title|message'."""
-    mapped: Dict[int, Tuple[str, str]] = {}
-    if not raw_value.strip():
-        return mapped
-
-    for chunk in raw_value.split(","):
-        item = chunk.strip()
-        if not item or "=" not in item or "|" not in item:
-            continue
-
-        input_id_raw, rest = item.split("=", 1)
-        title_raw, message_raw = rest.split("|", 1)
-        try:
-            input_id = int(input_id_raw.strip())
-        except ValueError:
-            continue
-
-        title = title_raw.strip()
-        message = message_raw.strip()
-        if title and message:
-            mapped[input_id] = (title, message)
-
-    return mapped
-
-
-def parse_output_levels_map(raw_value: str) -> Dict[int, Set[int]]:
-    """Parse output level map from 'output=1|2|3,output=4|5'."""
-    mapped: Dict[int, Set[int]] = {}
-    if not raw_value.strip():
-        return mapped
-
-    for chunk in raw_value.split(","):
-        item = chunk.strip()
-        if not item or "=" not in item:
-            continue
-
-        output_id_raw, levels_raw = item.split("=", 1)
-        try:
-            output_id = int(output_id_raw.strip())
-        except ValueError:
-            continue
-
-        levels: Set[int] = set()
-        normalized_levels = levels_raw.replace(";", "|").replace(":", "|")
-        for token in normalized_levels.split("|"):
-            level_text = token.strip()
-            if not level_text:
-                continue
-            try:
-                levels.add(int(level_text))
-            except ValueError:
-                continue
-
-        if levels:
-            mapped[output_id] = levels
-
-    return mapped
-
-
-SHELLY_INPUT_EVENT_MAP = parse_input_event_map(SHELLY_INPUT_EVENTS)
-SHELLY_OUTPUT_LEVEL_MAP = parse_output_levels_map(SHELLY_OUTPUT_LEVELS)
+def parse_csv_list(raw_value: str) -> List[str]:
+    return [x.strip() for x in raw_value.split(",") if x.strip()]
 
 
 def _priority_rank(priority: str) -> int:
@@ -232,6 +179,17 @@ def _priority_rank(priority: str) -> int:
         return int(priority.strip())
     except (TypeError, ValueError, AttributeError):
         return -1
+
+
+def _parse_alarm_level(raw: Any) -> Optional[int]:
+    try:
+        parsed = int(str(raw).strip())
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+    if 1 <= parsed <= 5:
+        return parsed
+    return None
 
 
 def resolve_ntfy_priority(title: str) -> str:
@@ -249,11 +207,86 @@ def resolve_ntfy_priority(title: str) -> str:
     if matched_priorities:
         return max(matched_priorities, key=_priority_rank)
 
-    # Backward-compatible fallback for existing setups.
-    if "probealarm" in normalized_title:
-        return NTFY_STANDARD_PRIORITY
+    return NTFY_DEFAULT_PRIORITY
 
-    return NTFY_PRIORITY
+
+
+_CLUSTER_CACHE: Dict[str, Any] = {
+    "ts": 0.0,
+    "leader_id": NODE_ID,
+    "leader_priority": NODE_PRIORITY,
+    "reachable": [],
+}
+
+
+def _normalize_peer_health_url(raw_peer: str) -> str:
+    peer = raw_peer.strip()
+    if not peer:
+        return ""
+
+    if "://" not in peer:
+        peer = f"http://{peer}"
+
+    from urllib.parse import urlsplit, urlunsplit
+
+    parsed = urlsplit(peer)
+    path = parsed.path or HEALTH_PATH
+    return urlunsplit((parsed.scheme or "http", parsed.netloc, path, "", ""))
+
+
+def _fetch_peer_node_status(health_url: str) -> Optional[Dict[str, Any]]:
+    try:
+        headers: Dict[str, str] = {}
+        if CLUSTER_SHARED_TOKEN:
+            headers["X-Cluster-Token"] = CLUSTER_SHARED_TOKEN
+        r = requests.get(health_url, timeout=CLUSTER_PING_TIMEOUT, verify=VERIFY_TLS, headers=headers)
+        r.raise_for_status()
+        payload = r.json()
+        if not isinstance(payload, dict):
+            return None
+        node_id = str(payload.get("node_id", "")).strip()
+        priority_raw = payload.get("node_priority")
+        try:
+            node_priority = int(str(priority_raw).strip())
+        except Exception:
+            return None
+        if not node_id:
+            return None
+        return {"node_id": node_id, "node_priority": node_priority, "url": health_url}
+    except Exception:
+        return None
+
+
+def resolve_cluster_status(force_refresh: bool = False) -> Dict[str, Any]:
+    now = time.monotonic()
+    if not force_refresh and now - float(_CLUSTER_CACHE.get("ts", 0.0)) < CLUSTER_STATUS_TTL_SECONDS:
+        return dict(_CLUSTER_CACHE)
+
+    candidates: List[Dict[str, Any]] = [{"node_id": NODE_ID, "node_priority": NODE_PRIORITY, "url": "self"}]
+
+    for peer in parse_csv_list(PEER_NODES):
+        health_url = _normalize_peer_health_url(peer)
+        if not health_url:
+            continue
+        status = _fetch_peer_node_status(health_url)
+        if status is not None:
+            candidates.append(status)
+
+    leader = max(candidates, key=lambda x: (int(x["node_priority"]), str(x["node_id"])))
+    _CLUSTER_CACHE.update(
+        {
+            "ts": now,
+            "leader_id": str(leader["node_id"]),
+            "leader_priority": int(leader["node_priority"]),
+            "reachable": [c["node_id"] for c in candidates],
+        }
+    )
+    return dict(_CLUSTER_CACHE)
+
+
+def is_active_sender() -> bool:
+    status = resolve_cluster_status()
+    return str(status.get("leader_id", "")) == NODE_ID
 
 
 def _looks_like_https(url: str) -> bool:
@@ -266,14 +299,35 @@ def validate_runtime_config() -> None:
     if WEBHOOK_ENABLED and not WEBHOOK_TOKEN:
         warnings.append("WEBHOOK_ENABLED=true but WEBHOOK_TOKEN is empty")
 
-    if WEBHOOK_ENABLED and WEBHOOK_PATH == WEBHOOK_HEALTH_PATH:
-        raise SystemExit("WEBHOOK_PATH and WEBHOOK_HEALTH_PATH must be different")
-
     if WEBHOOK_ENABLED and not WEBHOOK_PATH.startswith("/"):
         raise SystemExit("WEBHOOK_PATH must start with '/'")
 
-    if WEBHOOK_ENABLED and not WEBHOOK_HEALTH_PATH.startswith("/"):
-        raise SystemExit("WEBHOOK_HEALTH_PATH must start with '/'")
+    if WEBHOOK_ENABLED and not WEBHOOK_UI_PATH.startswith("/"):
+        raise SystemExit("WEBHOOK_UI_PATH must start with '/'")
+
+    if WEBHOOK_ENABLED and not WEBHOOK_TRIGGER_PATH.startswith("/"):
+        raise SystemExit("WEBHOOK_TRIGGER_PATH must start with '/'")
+
+    if HEALTH_ENABLED and not HEALTH_PATH.startswith("/"):
+        raise SystemExit("HEALTH_PATH must start with '/'")
+
+    if WEBHOOK_ENABLED and HEALTH_ENABLED and WEBHOOK_BIND == HEALTH_BIND and WEBHOOK_PORT == HEALTH_PORT:
+        raise SystemExit("WEBHOOK_PORT and HEALTH_PORT must be different when using same bind address")
+
+    if not (1 <= NODE_PRIORITY <= 100):
+        raise SystemExit("NODE_PRIORITY must be between 1 and 100")
+
+    if not HEALTH_METRICS_PATH.startswith("/"):
+        raise SystemExit("HEALTH_METRICS_PATH must start with '/'")
+
+    if HEALTH_PATH == HEALTH_METRICS_PATH:
+        raise SystemExit("HEALTH_PATH and HEALTH_METRICS_PATH must be different")
+
+    if WEBHOOK_REPLAY_PROTECTION and not WEBHOOK_HMAC_SECRET:
+        raise SystemExit("WEBHOOK_REPLAY_PROTECTION=true requires WEBHOOK_HMAC_SECRET")
+
+    if NTFY_RETRY_ATTEMPTS < 1:
+        raise SystemExit("NTFY_RETRY_ATTEMPTS must be >= 1")
 
     if NTFY_URL and not _looks_like_https(NTFY_URL):
         warnings.append("NTFY_URL is not https")
@@ -284,11 +338,79 @@ def validate_runtime_config() -> None:
     if DIVERA_FALLBACK_URL and not _looks_like_https(DIVERA_FALLBACK_URL):
         warnings.append("DIVERA_FALLBACK_URL is not https")
 
+    for target in _build_ntfy_targets():
+        if target and not _looks_like_https(target):
+            warnings.append(f"NTFY target is not https: {target}")
+
     if not VERIFY_TLS:
         warnings.append("VERIFY_TLS is disabled")
 
+
     for warning in warnings:
         print(f"WARNING: {warning}")
+
+
+def audit_log(event: str, payload: Dict[str, Any]) -> None:
+    if not AUDIT_LOG_FILE:
+        return
+    try:
+        entry = {
+            "ts": int(time.time()),
+            "event": event,
+            "node_id": NODE_ID,
+            "payload": payload,
+        }
+        os.makedirs(os.path.dirname(AUDIT_LOG_FILE), exist_ok=True)
+        with open(AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        return
+
+
+def _build_ntfy_targets() -> List[str]:
+    targets: List[str] = []
+    primary = NTFY_URL.rstrip("/")
+    if primary:
+        targets.append(primary)
+    for raw in NTFY_FALLBACK_URLS.split(","):
+        item = raw.strip().rstrip("/")
+        if item and item not in targets:
+            targets.append(item)
+    return targets
+
+
+def _build_webhook_signature(data: Dict[str, Any], ts: int) -> str:
+    if not WEBHOOK_HMAC_SECRET:
+        return ""
+    basis = "|".join(
+        [
+            str(ts),
+            str(data.get("title", "")).strip(),
+            str(data.get("text", "")).strip(),
+            str(data.get("address", "")).strip(),
+            str(data.get("priority", "")).strip(),
+        ]
+    )
+    return hmac.new(WEBHOOK_HMAC_SECRET.encode("utf-8"), basis.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _verify_replay_guard(data: Dict[str, Any], headers: Any) -> None:
+    if not WEBHOOK_REPLAY_PROTECTION:
+        return
+
+    ts_raw = data.get("ts", headers.get("X-Webhook-Timestamp", ""))
+    sig = str(data.get("sig", headers.get("X-Webhook-Signature", ""))).strip().lower()
+    try:
+        ts = int(str(ts_raw).strip())
+    except Exception:
+        raise ValueError("Missing/invalid ts for replay protection")
+
+    if abs(int(time.time()) - ts) > WEBHOOK_MAX_SKEW_SECONDS:
+        raise ValueError("Webhook timestamp outside allowed skew")
+
+    expected = _build_webhook_signature(data, ts)
+    if not expected or not hmac.compare_digest(sig, expected):
+        raise ValueError("Invalid webhook signature")
 
 
 def metric_inc(name: str, amount: int = 1) -> None:
@@ -587,19 +709,37 @@ def format_alarm(alarm: Dict[str, Any]) -> Tuple[str, str]:
     return title, "\n".join(lines)
 
 
-def ntfy_publish(title: str, message: str) -> None:
-    # Keep title/message payload unchanged; only Priority header is derived from title keywords.
-    priority = resolve_ntfy_priority(title)
+def ntfy_publish(title: str, message: str, priority_override: Optional[str] = None) -> None:
+    # Keep title/message payload unchanged; only Priority header is derived from title keywords unless explicitly set.
+    priority = priority_override.strip() if priority_override and priority_override.strip() else resolve_ntfy_priority(title)
     headers = {"Title": title, "Priority": priority}
     if NTFY_AUTH_TOKEN:
         headers["Authorization"] = f"Bearer {NTFY_AUTH_TOKEN}"
-    requests.post(
-        f"{NTFY_URL}/{NTFY_TOPIC}",
-        data=message.encode("utf-8"),
-        headers=headers,
-        timeout=REQUEST_TIMEOUT,
-        verify=VERIFY_TLS,
-    ).raise_for_status()
+
+    targets = _build_ntfy_targets()
+    if not targets:
+        raise RuntimeError("No NTFY target configured")
+
+    errors: List[str] = []
+    for attempt in range(max(1, NTFY_RETRY_ATTEMPTS)):
+        for target in targets:
+            try:
+                requests.post(
+                    f"{target}/{NTFY_TOPIC}",
+                    data=message.encode("utf-8"),
+                    headers=headers,
+                    timeout=REQUEST_TIMEOUT,
+                    verify=VERIFY_TLS,
+                ).raise_for_status()
+                audit_log("ntfy_sent", {"target": target, "title": title, "priority": priority})
+                return
+            except Exception as exc:
+                errors.append(f"{target}: {exc}")
+        if attempt + 1 < max(1, NTFY_RETRY_ATTEMPTS):
+            time.sleep(NTFY_RETRY_DELAY_SECONDS)
+
+    audit_log("ntfy_failed", {"title": title, "priority": priority, "errors": errors[-5:]})
+    raise RuntimeError("All ntfy targets failed: " + " | ".join(errors[-5:]))
 
 
 def build_divera_request_url(base_url: str, accesskey: str) -> str:
@@ -696,16 +836,56 @@ def build_test_alarm(args: argparse.Namespace) -> Dict[str, Any]:
     return alarm
 
 
-def publish_message(title: str, message: str) -> None:
-    ntfy_publish(title, message)
-    metric_inc("push_sent")
+def enqueue_notification(state: Dict[str, Any], title: str, message: str, priority_override: Optional[str], error: str) -> None:
+    with STATE_LOCK:
+        queue = state.setdefault("pending_notifications", [])
+        queue.append(
+            {
+                "title": title,
+                "message": message,
+                "priority": priority_override or "",
+                "error": error,
+                "ts": int(time.time()),
+            }
+        )
+        state["pending_notifications"] = queue[-200:]
+        save_state(STATE_FILE, state)
+
+
+def flush_pending_notifications(state: Dict[str, Any]) -> None:
+    with STATE_LOCK:
+        pending = list(state.get("pending_notifications", []))
+    if not pending:
+        return
+
+    remaining: List[Dict[str, Any]] = []
+    for item in pending:
+        try:
+            ntfy_publish(item.get("title", ""), item.get("message", ""), priority_override=item.get("priority", ""))
+            metric_inc("push_sent")
+        except Exception as exc:
+            item["error"] = str(exc)
+            remaining.append(item)
+
+    with STATE_LOCK:
+        state["pending_notifications"] = remaining[-200:]
+        save_state(STATE_FILE, state)
+
+
+def publish_message(state: Dict[str, Any], title: str, message: str, priority_override: Optional[str] = None) -> None:
+    try:
+        ntfy_publish(title, message, priority_override=priority_override)
+        metric_inc("push_sent")
+    except Exception as exc:
+        enqueue_notification(state, title, message, priority_override, str(exc))
+        raise
 
 
 def run_test_push(args: argparse.Namespace) -> None:
     validate_push_target()
     alarm = build_test_alarm(args)
     title, msg = format_alarm(alarm)
-    publish_message(title, msg)
+    ntfy_publish(title, msg)
     print("Test push sent.")
 
 
@@ -731,76 +911,6 @@ def run_divera_alarm_check(output_json: bool) -> int:
     return 0
 
 
-def fetch_shelly_input_state(input_id: int) -> Optional[bool]:
-    if not SHELLY_UNI_URL:
-        return None
-    r = requests.get(
-        f"{SHELLY_UNI_URL}/rpc/Input.GetStatus",
-        params={"id": input_id},
-        timeout=REQUEST_TIMEOUT,
-        verify=VERIFY_TLS,
-    )
-    r.raise_for_status()
-    data = r.json()
-    val = data.get("state")
-    if isinstance(val, bool):
-        return val
-    return None
-
-
-def set_shelly_output_state(output_id: int, is_on: bool) -> None:
-    if not SHELLY_UNI_URL:
-        return
-
-    r = requests.get(
-        f"{SHELLY_UNI_URL}/rpc/Switch.Set",
-        params={"id": output_id, "on": str(is_on).lower()},
-        timeout=REQUEST_TIMEOUT,
-        verify=VERIFY_TLS,
-    )
-    r.raise_for_status()
-
-
-def alarm_level_value(alarm: Dict[str, Any]) -> Optional[int]:
-    raw = safe_get(alarm, ["priority", "prio", "alarm_level", "alarmlevel", "level"])
-    if not raw:
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
-
-
-def highest_alarm_level(alarms: List[Dict[str, Any]]) -> Optional[int]:
-    levels = [lvl for lvl in (alarm_level_value(alarm) for alarm in alarms) if lvl is not None]
-    if not levels:
-        return None
-    return max(levels)
-
-
-def apply_shelly_output_levels(alarms: List[Dict[str, Any]], state: Dict[str, Any]) -> None:
-    if not SHELLY_OUTPUT_LEVEL_MAP:
-        return
-
-    current_level = highest_alarm_level(alarms)
-    previous: Dict[str, bool] = state.setdefault("shelly_outputs", {})
-    changed = False
-
-    for output_id, active_levels in SHELLY_OUTPUT_LEVEL_MAP.items():
-        should_be_on = current_level in active_levels if current_level is not None else False
-        key = str(output_id)
-        if previous.get(key) == should_be_on:
-            continue
-
-        set_shelly_output_state(output_id, should_be_on)
-        previous[key] = should_be_on
-        metric_inc("shelly_output_switches")
-        changed = True
-
-    if changed:
-        save_state(STATE_FILE, state)
-
-
 def build_alarm_from_webhook_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     title = str(payload.get("title", "")).strip()
     if not title:
@@ -815,13 +925,12 @@ def build_alarm_from_webhook_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     if address:
         alarm["address"] = address
 
-    alarm_level = payload.get("alarm_level", payload.get("level", payload.get("priority", payload.get("prio"))))
-    if alarm_level is not None and str(alarm_level).strip() != "":
-        try:
-            parsed_level = int(str(alarm_level).strip())
-            alarm["alarm_level"] = str(parsed_level)
-        except ValueError:
-            raise ValueError("alarm_level must be numeric")
+    priority = payload.get("priority", payload.get("prio", payload.get("alarm_level", payload.get("level"))))
+    if priority is not None and str(priority).strip() != "":
+        parsed_priority = _parse_alarm_level(priority)
+        if parsed_priority is None:
+            raise ValueError("priority must be an integer between 1 and 5")
+        alarm["priority"] = str(parsed_priority)
 
     return alarm
 
@@ -829,19 +938,91 @@ def build_alarm_from_webhook_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 def handle_webhook_alarm(payload: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     alarm = build_alarm_from_webhook_payload(payload)
     title, msg = format_alarm(alarm)
-    publish_message(title, msg)
-
-    # Optional: drive outputs from webhook-provided alarm_level as well.
-    with STATE_LOCK:
-        apply_shelly_output_levels([alarm], state)
-        save_state(STATE_FILE, state)
+    publish_message(state, title, msg, priority_override=safe_get(alarm, ["priority"]))
 
     metric_inc("webhook_success")
+    audit_log("webhook_alarm", {"title": title, "priority": safe_get(alarm, ["priority"]), "address": safe_get(alarm, ["address"])})
     return {
         "status": "ok",
         "title": title,
-        "has_alarm_level": alarm_level_value(alarm) is not None,
+        "priority": safe_get(alarm, ["priority"]),
     }
+
+
+
+
+def _html_escape(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def render_web_form_page(message: str = "", error: bool = False) -> str:
+    status_html = ""
+    if message:
+        color = "#b00020" if error else "#0a7f2e"
+        status_html = f'<p style="color:{color};font-weight:600;">{_html_escape(message)}</p>'
+
+    return f"""<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Alarm Gateway Webformular</title>
+</head>
+<body style="font-family:Arial,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;">
+  <h1>Alarm manuell senden</h1>
+  <p>Felder: Titel, Beschreibung, Adresse, Priorität (1-5).</p>
+  {status_html}
+  <form method="post" action="{_html_escape(WEBHOOK_UI_PATH)}" style="display:grid;gap:0.75rem;">
+    <label>Titel*<br/><input required name="title" style="width:100%;padding:0.5rem;"/></label>
+    <label>Beschreibung<br/><textarea name="text" rows="4" style="width:100%;padding:0.5rem;"></textarea></label>
+    <label>Adresse<br/><input name="address" style="width:100%;padding:0.5rem;"/></label>
+    <label>Priorität (1-5)<br/><input name="priority" type="number" min="1" max="5" style="width:120px;padding:0.5rem;"/></label>
+    <button type="submit" style="padding:0.6rem 1rem;">Alarm senden</button>
+  </form>
+</body>
+</html>
+"""
+
+
+def parse_form_urlencoded(raw_body: bytes) -> Dict[str, str]:
+    from urllib.parse import parse_qs
+
+    parsed = parse_qs(raw_body.decode("utf-8"), keep_blank_values=True)
+    return {k: (v[0] if v else "") for k, v in parsed.items()}
+
+
+def parse_query_params(path: str) -> Tuple[str, Dict[str, str]]:
+    from urllib.parse import parse_qs, urlsplit
+
+    parsed = urlsplit(path)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    return parsed.path, {k: (v[0] if v else "") for k, v in query.items()}
+
+
+def _is_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
+    if not WEBHOOK_TOKEN:
+        return True
+
+    auth = headers.get("Authorization", "")
+    expected = f"Bearer {WEBHOOK_TOKEN}"
+    if auth.strip() == expected:
+        return True
+
+    return str(query_params.get("token", "")).strip() == WEBHOOK_TOKEN
+
+
+def _is_cluster_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
+    if not CLUSTER_SHARED_TOKEN:
+        return True
+
+    header_token = str(headers.get("X-Cluster-Token", "")).strip()
+    query_token = str(query_params.get("cluster_token", "")).strip()
+    return header_token == CLUSTER_SHARED_TOKEN or query_token == CLUSTER_SHARED_TOKEN
 
 
 def make_webhook_handler(state: Dict[str, Any]):
@@ -854,51 +1035,157 @@ def make_webhook_handler(state: Dict[str, Any]):
             self.end_headers()
             self.wfile.write(encoded)
 
+        def _send_html(self, code: int, html: str) -> None:
+            encoded = html.encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def do_GET(self) -> None:  # noqa: N802
-            if self.path != WEBHOOK_HEALTH_PATH:
-                self._send_json(404, {"error": "not found"})
+            request_path, query_params = parse_query_params(self.path)
+
+            if request_path == WEBHOOK_UI_PATH:
+                self._send_html(200, render_web_form_page())
                 return
 
-            self._send_json(
-                200,
-                {
-                    "status": "ok",
-                    "webhook_enabled": WEBHOOK_ENABLED,
-                    "metrics": metrics_snapshot(),
-                },
-            )
+            if request_path == WEBHOOK_TRIGGER_PATH:
+                metric_inc("webhook_requests")
+                if not _is_authorized(self.headers, query_params):
+                    metric_inc("webhook_error")
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                try:
+                    _verify_replay_guard(query_params, self.headers)
+                    result = handle_webhook_alarm(query_params, state)
+                    self._send_json(200, result)
+                except Exception as exc:
+                    metric_inc("webhook_error")
+                    self._send_json(400, {"error": str(exc)})
+                return
+
+            self._send_json(404, {"error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != WEBHOOK_PATH:
-                self._send_json(404, {"error": "not found"})
-                return
+            request_path, query_params = parse_query_params(self.path)
 
-            metric_inc("webhook_requests")
+            if request_path == WEBHOOK_PATH:
+                metric_inc("webhook_requests")
 
-            if WEBHOOK_TOKEN:
-                auth = self.headers.get("Authorization", "")
-                expected = f"Bearer {WEBHOOK_TOKEN}"
-                if auth.strip() != expected:
+                if not _is_authorized(self.headers, query_params):
                     metric_inc("webhook_error")
                     self._send_json(401, {"error": "unauthorized"})
                     return
 
-            content_length = int(self.headers.get("Content-Length", "0") or "0")
-            body = self.rfile.read(content_length)
-            try:
-                payload = json.loads(body.decode("utf-8")) if body else {}
-                if not isinstance(payload, dict):
-                    raise ValueError("JSON must be an object")
-                result = handle_webhook_alarm(payload, state)
-                self._send_json(200, result)
-            except Exception as exc:
-                metric_inc("webhook_error")
-                self._send_json(400, {"error": str(exc)})
+                content_length = int(self.headers.get("Content-Length", "0") or "0")
+                body = self.rfile.read(content_length)
+                try:
+                    content_type = self.headers.get("Content-Type", "")
+                    if "application/x-www-form-urlencoded" in content_type:
+                        payload = parse_form_urlencoded(body)
+                    else:
+                        payload = json.loads(body.decode("utf-8")) if body else {}
+                    if not isinstance(payload, dict):
+                        raise ValueError("Payload must be an object")
+                    _verify_replay_guard(payload, self.headers)
+                    result = handle_webhook_alarm(payload, state)
+                    self._send_json(200, result)
+                except Exception as exc:
+                    metric_inc("webhook_error")
+                    self._send_json(400, {"error": str(exc)})
+                return
+
+            if request_path == WEBHOOK_UI_PATH:
+                metric_inc("webhook_requests")
+                content_length = int(self.headers.get("Content-Length", "0") or "0")
+                body = self.rfile.read(content_length)
+                try:
+                    payload = parse_form_urlencoded(body)
+                    handle_webhook_alarm(payload, state)
+                    self._send_html(200, render_web_form_page("Alarm wurde gesendet."))
+                except Exception as exc:
+                    metric_inc("webhook_error")
+                    self._send_html(400, render_web_form_page(f"Fehler: {exc}", error=True))
+                return
+
+            self._send_json(404, {"error": "not found"})
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
             debug_log(f"webhook: {format % args}")
 
     return WebhookHandler
+
+def make_health_handler():
+    class HealthHandler(BaseHTTPRequestHandler):
+        def _send_json(self, code: int, payload: Dict[str, Any]) -> None:
+            encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def do_GET(self) -> None:  # noqa: N802
+            request_path, query_params = parse_query_params(self.path)
+
+            if request_path == HEALTH_METRICS_PATH:
+                metrics = metrics_snapshot()
+                lines = [
+                    "# HELP alarm_gateway_metric Generic runtime metric",
+                    "# TYPE alarm_gateway_metric gauge",
+                ]
+                for key, value in metrics.items():
+                    lines.append(f'alarm_gateway_metric{{name="{key}"}} {value}')
+                payload = "\n".join(lines) + "\n"
+                encoded = payload.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
+
+            if request_path != HEALTH_PATH:
+                self._send_json(404, {"error": "not found"})
+                return
+
+            if not _is_cluster_authorized(self.headers, query_params):
+                self._send_json(401, {"error": "unauthorized"})
+                return
+
+            cluster = dict(_CLUSTER_CACHE)
+            leader_id = str(cluster.get("leader_id", NODE_ID))
+            self._send_json(
+                200,
+                {
+                    "status": "ok",
+                    "node_id": NODE_ID,
+                    "node_priority": NODE_PRIORITY,
+                    "leader_id": leader_id,
+                    "is_active_sender": leader_id == NODE_ID,
+                    "reachable_nodes": cluster.get("reachable", []),
+                    "metrics": metrics_snapshot(),
+                },
+            )
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
+            debug_log(f"health: {format % args}")
+
+    return HealthHandler
+
+
+def start_health_server() -> Optional[ThreadingHTTPServer]:
+    if not HEALTH_ENABLED:
+        return None
+
+    handler = make_health_handler()
+    server = ThreadingHTTPServer((HEALTH_BIND, HEALTH_PORT), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(f"Health endpoint: http://{HEALTH_BIND}:{HEALTH_PORT}{HEALTH_PATH}")
+    print(f"Prometheus metrics: http://{HEALTH_BIND}:{HEALTH_PORT}{HEALTH_METRICS_PATH}")
+    return server
 
 
 def start_webhook_server(state: Dict[str, Any]) -> Optional[ThreadingHTTPServer]:
@@ -909,12 +1196,21 @@ def start_webhook_server(state: Dict[str, Any]) -> Optional[ThreadingHTTPServer]
     server = ThreadingHTTPServer((WEBHOOK_BIND, WEBHOOK_PORT), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    print(f"Webhook listening on http://{WEBHOOK_BIND}:{WEBHOOK_PORT}{WEBHOOK_PATH}")
-    print(f"Health endpoint: http://{WEBHOOK_BIND}:{WEBHOOK_PORT}{WEBHOOK_HEALTH_PATH}")
+    print(f"Webhook JSON endpoint: http://{WEBHOOK_BIND}:{WEBHOOK_PORT}{WEBHOOK_PATH}")
+    print(f"Webhook Trigger endpoint (GET): http://{WEBHOOK_BIND}:{WEBHOOK_PORT}{WEBHOOK_TRIGGER_PATH}")
+    print(f"Web UI: http://{WEBHOOK_BIND}:{WEBHOOK_PORT}{WEBHOOK_UI_PATH}")
     return server
 
 
 def handle_divera_poll(state: Dict[str, Any]) -> None:
+    cluster = resolve_cluster_status(force_refresh=True)
+    if str(cluster.get("leader_id", "")) != NODE_ID:
+        metric_inc("cluster_standby_skip")
+        debug_log(
+            f"Standby mode: leader={cluster.get('leader_id')} prio={cluster.get('leader_priority')}"
+        )
+        return
+
     data = fetch_alarms()
     alarms = sort_alarms_oldest_first(get_alarms_list(data))
     debug_log(f"DiVeRa Poll: {len(alarms)} Alarm(e) erkannt")
@@ -935,7 +1231,7 @@ def handle_divera_poll(state: Dict[str, Any]) -> None:
             continue
 
         title, msg = format_alarm(alarm)
-        publish_message(title, msg)
+        publish_message(state, title, msg)
         any_sent = True
         recent.append(fp)
         recent_set.add(fp)
@@ -947,49 +1243,8 @@ def handle_divera_poll(state: Dict[str, Any]) -> None:
         latest = pick_latest_alarm(alarms)
         state["last_fingerprint"] = fingerprint(latest) if latest else None
 
-        apply_shelly_output_levels(alarms, state)
         save_state(STATE_FILE, state)
 
-
-def handle_shelly_poll(state: Dict[str, Any]) -> None:
-    if not SHELLY_UNI_URL:
-        return
-    with STATE_LOCK:
-        previous: Dict[str, bool] = state.setdefault("shelly_inputs", {})
-    now = time.time()
-    for input_id in SHELLY_INPUT_IDS:
-        current = fetch_shelly_input_state(input_id)
-        if current is None:
-            continue
-
-        key = str(input_id)
-        old = previous.get(key)
-        previous[key] = current
-
-        if old is None:
-            continue
-
-        rising_edge = (not old) and current
-        falling_edge = old and (not current)
-        should_trigger = rising_edge if SHELLY_TRIGGER_ON else falling_edge
-        if not should_trigger:
-            continue
-
-        with STATE_LOCK:
-            last_ts = float(state.get("shelly_last_trigger_ts", 0.0))
-        if now - last_ts < SHELLY_DEBOUNCE_SECONDS:
-            continue
-
-        title_template, message_template = SHELLY_INPUT_EVENT_MAP.get(
-            input_id,
-            (SHELLY_TITLE_TEMPLATE, SHELLY_MESSAGE_TEMPLATE),
-        )
-        title = title_template.format(input_id=input_id, state=current)
-        message = message_template.format(input_id=input_id, state=current)
-        publish_message(title, message)
-        with STATE_LOCK:
-            state["shelly_last_trigger_ts"] = now
-            save_state(STATE_FILE, state)
 
 
 def main() -> None:
@@ -1003,9 +1258,9 @@ def main() -> None:
     validate_push_target()
     validate_runtime_config()
     state = load_state(STATE_FILE)
+    health_server = start_health_server()
     webhook_server = start_webhook_server(state)
     next_divera = 0.0
-    next_shelly = 0.0
     while True:
         try:
             mono_now = time.monotonic()
@@ -1013,9 +1268,9 @@ def main() -> None:
                 handle_divera_poll(state)
                 metric_inc("divera_poll_ok")
                 next_divera = mono_now + POLL_SECONDS
-            if SHELLY_UNI_URL and mono_now >= next_shelly:
-                handle_shelly_poll(state)
-                next_shelly = mono_now + SHELLY_POLL_SECONDS
+
+            if is_active_sender():
+                flush_pending_notifications(state)
         except Exception as e:
             metric_inc("divera_poll_error")
             print(f"ERROR: {e}")

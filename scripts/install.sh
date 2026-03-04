@@ -52,19 +52,50 @@ DIVERA_URL="https://www.divera247.com/api/v2/alarms?accesskey=<API-Key>"
 DIVERA_FALLBACK_URL="https://divera247.com/api/v2/alarms?accesskey=<API-Key>"
 POLL_SECONDS="20"
 STATE_FILE="/var/lib/alarm-gateway/state.json"
+
+# ntfy priority / routing
 NTFY_PRIORITY="5"
+NTFY_DEFAULT_PRIORITY="5"
+NTFY_PRIORITY_KEYWORDS=""
 NTFY_AUTH_TOKEN=""
+NTFY_FALLBACK_URLS=""
+NTFY_RETRY_ATTEMPTS="2"
+NTFY_RETRY_DELAY_SECONDS="1.5"
+
 REQUEST_TIMEOUT="15"
 VERIFY_TLS="true"
 
-# OPTIONAL (Shelly Plus Uni input polling)
-# SHELLY_UNI_URL="http://192.168.1.50"
-# SHELLY_INPUT_IDS="0,1"
-# SHELLY_POLL_SECONDS="1"
-# SHELLY_TRIGGER_ON="true"
-# SHELLY_DEBOUNCE_SECONDS="10"
-# SHELLY_TITLE_TEMPLATE="Shelly Input {input_id}"
-# SHELLY_MESSAGE_TEMPLATE="Shelly Plus Uni Eingang {input_id} wurde ausgelöst."
+# Cluster / HA
+NODE_ID="gateway-standort-a"
+NODE_PRIORITY="100"
+PEER_NODES=""
+CLUSTER_PING_TIMEOUT="2"
+CLUSTER_STATUS_TTL_SECONDS="5"
+CLUSTER_SHARED_TOKEN=""
+
+# Audit Log
+AUDIT_LOG_FILE=""
+
+# Webhook / Trigger / UI
+WEBHOOK_ENABLED="true"
+WEBHOOK_BIND="0.0.0.0"
+WEBHOOK_PORT="8080"
+WEBHOOK_PATH="/webhook/alarm"
+WEBHOOK_TRIGGER_PATH="/webhook/trigger"
+WEBHOOK_UI_PATH="/"
+WEBHOOK_TOKEN=""
+
+# Replay-Schutz (optional)
+WEBHOOK_REPLAY_PROTECTION="false"
+WEBHOOK_MAX_SKEW_SECONDS="120"
+WEBHOOK_HMAC_SECRET=""
+
+# Separater Health-Port
+HEALTH_ENABLED="true"
+HEALTH_BIND="0.0.0.0"
+HEALTH_PORT="8081"
+HEALTH_PATH="/healthz"
+HEALTH_METRICS_PATH="/metrics"
 EOF
   chmod 0640 "$ENV_DIR/alarm-gateway.env"
   chown root:"$USER_NAME" "$ENV_DIR/alarm-gateway.env"
