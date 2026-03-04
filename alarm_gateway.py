@@ -13,7 +13,9 @@ import argparse
 import hashlib
 import hmac
 import json
+import logging
 import os
+import random
 import threading
 import time
 from datetime import datetime
@@ -24,6 +26,19 @@ import requests
 
 
 DEFAULT_ENV_FILE = "/etc/alarm-gateway/alarm-gateway.env"
+
+
+
+LOGGER = logging.getLogger("alarm_gateway")
+
+
+def configure_logging() -> None:
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")
+
+
+configure_logging()
 
 
 def load_env_file(path: str) -> None:
@@ -53,7 +68,8 @@ def load_env_file(path: str) -> None:
                     value = value[1:-1]
 
                 os.environ.setdefault(key, value)
-    except Exception:
+    except Exception as exc:
+        LOGGER.warning("Failed to load env file '%s': %s", path, exc)
         return
 
 
@@ -84,7 +100,7 @@ DIVERA_FALLBACK_URL = env("DIVERA_FALLBACK_URL", DIVERA_FALLBACK_URL_DEFAULT)
 _raw_divera_accesskey = env("DIVERA_ACCESSKEY", "")
 DIVERA_ACCESSKEY = "" if _is_placeholder_secret(_raw_divera_accesskey, DIVERA_ACCESSKEY_PLACEHOLDER) else _raw_divera_accesskey
 
-POLL_SECONDS = int(env("POLL_SECONDS", "20"))
+POLL_SECONDS = int(env("POLL_SECONDS", env("POLL_INTERVAL_SECONDS", "20")))
 STATE_FILE = env("STATE_FILE", "/var/lib/alarm-gateway/state.json")
 
 NTFY_URL = env("NTFY_URL", "").rstrip("/")
@@ -96,6 +112,7 @@ NTFY_AUTH_TOKEN = env("NTFY_AUTH_TOKEN", "")
 NTFY_FALLBACK_URLS = env("NTFY_FALLBACK_URLS", "")
 NTFY_RETRY_ATTEMPTS = int(env("NTFY_RETRY_ATTEMPTS", "2"))
 NTFY_RETRY_DELAY_SECONDS = float(env("NTFY_RETRY_DELAY_SECONDS", "1.5"))
+NTFY_RETRY_JITTER_SECONDS = float(env("NTFY_RETRY_JITTER_SECONDS", "0.0"))
 
 REQUEST_TIMEOUT = float(env("REQUEST_TIMEOUT", "15"))
 VERIFY_TLS = env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
@@ -142,7 +159,7 @@ RUNTIME_METRICS: Dict[str, int] = {
 
 def debug_log(message: str) -> None:
     if DEBUG_DIVERA:
-        print(f"[debug] {message}")
+        LOGGER.debug(message)
 
 
 def parse_priority_keyword_map(raw_value: str) -> List[Tuple[str, str]]:
@@ -294,10 +311,10 @@ def _looks_like_https(url: str) -> bool:
 
 
 def validate_runtime_config() -> None:
-    warnings: List[str] = []
+    warnings: Set[str] = set()
 
     if WEBHOOK_ENABLED and not WEBHOOK_TOKEN:
-        warnings.append("WEBHOOK_ENABLED=true but WEBHOOK_TOKEN is empty")
+        warnings.add("WEBHOOK_ENABLED=true but WEBHOOK_TOKEN is empty")
 
     if WEBHOOK_ENABLED and not WEBHOOK_PATH.startswith("/"):
         raise SystemExit("WEBHOOK_PATH must start with '/'")
@@ -329,25 +346,31 @@ def validate_runtime_config() -> None:
     if NTFY_RETRY_ATTEMPTS < 1:
         raise SystemExit("NTFY_RETRY_ATTEMPTS must be >= 1")
 
+    if NTFY_RETRY_DELAY_SECONDS < 0:
+        raise SystemExit("NTFY_RETRY_DELAY_SECONDS must be >= 0")
+
+    if NTFY_RETRY_JITTER_SECONDS < 0:
+        raise SystemExit("NTFY_RETRY_JITTER_SECONDS must be >= 0")
+
     if NTFY_URL and not _looks_like_https(NTFY_URL):
-        warnings.append("NTFY_URL is not https")
+        warnings.add("NTFY_URL is not https")
 
     if DIVERA_URL and not _looks_like_https(DIVERA_URL):
-        warnings.append("DIVERA_URL is not https")
+        warnings.add("DIVERA_URL is not https")
 
     if DIVERA_FALLBACK_URL and not _looks_like_https(DIVERA_FALLBACK_URL):
-        warnings.append("DIVERA_FALLBACK_URL is not https")
+        warnings.add("DIVERA_FALLBACK_URL is not https")
 
     for target in _build_ntfy_targets():
         if target and not _looks_like_https(target):
-            warnings.append(f"NTFY target is not https: {target}")
+            warnings.add(f"NTFY target is not https: {target}")
 
     if not VERIFY_TLS:
-        warnings.append("VERIFY_TLS is disabled")
+        warnings.add("VERIFY_TLS is disabled")
 
 
-    for warning in warnings:
-        print(f"WARNING: {warning}")
+    for warning in sorted(warnings):
+        LOGGER.warning(warning)
 
 
 def audit_log(event: str, payload: Dict[str, Any]) -> None:
@@ -736,7 +759,8 @@ def ntfy_publish(title: str, message: str, priority_override: Optional[str] = No
             except Exception as exc:
                 errors.append(f"{target}: {exc}")
         if attempt + 1 < max(1, NTFY_RETRY_ATTEMPTS):
-            time.sleep(NTFY_RETRY_DELAY_SECONDS)
+            jitter = random.uniform(0.0, NTFY_RETRY_JITTER_SECONDS) if NTFY_RETRY_JITTER_SECONDS > 0 else 0.0
+            time.sleep(NTFY_RETRY_DELAY_SECONDS + jitter)
 
     audit_log("ntfy_failed", {"title": title, "priority": priority, "errors": errors[-5:]})
     raise RuntimeError("All ntfy targets failed: " + " | ".join(errors[-5:]))
@@ -1183,8 +1207,8 @@ def start_health_server() -> Optional[ThreadingHTTPServer]:
     server = ThreadingHTTPServer((HEALTH_BIND, HEALTH_PORT), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    print(f"Health endpoint: http://{HEALTH_BIND}:{HEALTH_PORT}{HEALTH_PATH}")
-    print(f"Prometheus metrics: http://{HEALTH_BIND}:{HEALTH_PORT}{HEALTH_METRICS_PATH}")
+    LOGGER.info("Health endpoint: http://%s:%s%s", HEALTH_BIND, HEALTH_PORT, HEALTH_PATH)
+    LOGGER.info("Prometheus metrics: http://%s:%s%s", HEALTH_BIND, HEALTH_PORT, HEALTH_METRICS_PATH)
     return server
 
 
@@ -1196,9 +1220,9 @@ def start_webhook_server(state: Dict[str, Any]) -> Optional[ThreadingHTTPServer]
     server = ThreadingHTTPServer((WEBHOOK_BIND, WEBHOOK_PORT), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    print(f"Webhook JSON endpoint: http://{WEBHOOK_BIND}:{WEBHOOK_PORT}{WEBHOOK_PATH}")
-    print(f"Webhook Trigger endpoint (GET): http://{WEBHOOK_BIND}:{WEBHOOK_PORT}{WEBHOOK_TRIGGER_PATH}")
-    print(f"Web UI: http://{WEBHOOK_BIND}:{WEBHOOK_PORT}{WEBHOOK_UI_PATH}")
+    LOGGER.info("Webhook JSON endpoint: http://%s:%s%s", WEBHOOK_BIND, WEBHOOK_PORT, WEBHOOK_PATH)
+    LOGGER.info("Webhook Trigger endpoint (GET): http://%s:%s%s", WEBHOOK_BIND, WEBHOOK_PORT, WEBHOOK_TRIGGER_PATH)
+    LOGGER.info("Web UI: http://%s:%s%s", WEBHOOK_BIND, WEBHOOK_PORT, WEBHOOK_UI_PATH)
     return server
 
 
@@ -1273,7 +1297,7 @@ def main() -> None:
                 flush_pending_notifications(state)
         except Exception as e:
             metric_inc("divera_poll_error")
-            print(f"ERROR: {e}")
+            LOGGER.error("%s", e)
         time.sleep(0.2)
 
 

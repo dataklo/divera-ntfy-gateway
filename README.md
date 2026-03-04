@@ -108,6 +108,8 @@ Wenn im Log keine Fehler erscheinen, läuft dein Gateway korrekt.
 - `NTFY_URL`: Basis-URL deines ntfy Servers
 - `NTFY_TOPIC`: Ziel-Topic für Push-Nachrichten
 
+> Hinweis zur Migration: `POLL_INTERVAL_SECONDS` wird weiterhin als Fallback unterstützt, ist aber **deprecated**. Bitte künftig `POLL_SECONDS` verwenden.
+
 ### ntfy Robustheit / Fallback
 
 Wenn dein primärer ntfy-Server nicht erreichbar ist, können automatisch Fallback-Server verwendet werden.
@@ -117,6 +119,13 @@ NTFY_URL="https://ntfy-primary.example.de"
 NTFY_FALLBACK_URLS="https://ntfy-backup1.example.de,https://ntfy-backup2.example.de"
 NTFY_RETRY_ATTEMPTS="3"
 NTFY_RETRY_DELAY_SECONDS="1.0"
+NTFY_RETRY_JITTER_SECONDS="0.3"
+```
+
+Optional für Logging:
+
+```env
+LOG_LEVEL="INFO"
 ```
 
 ### Prioritäten über Keywords
@@ -158,7 +167,7 @@ NTFY_TOPIC="feuerwehr-alarm"
 NTFY_AUTH_TOKEN=""
 
 # --- Polling ---
-POLL_INTERVAL_SECONDS="15"
+POLL_SECONDS="15"
 
 # --- Priorität ---
 NTFY_DEFAULT_PRIORITY="3"
@@ -193,7 +202,7 @@ DIVERA_ACCESSKEY="divera_accesskey_hier"
 NTFY_URL="https://ntfy.example.com"
 NTFY_TOPIC="feuerwehr-alarm"
 
-POLL_INTERVAL_SECONDS="15"
+POLL_SECONDS="15"
 
 WEBHOOK_ENABLED="true"
 WEBHOOK_PORT="8080"
@@ -215,7 +224,7 @@ DIVERA_ACCESSKEY="divera_accesskey_hier"
 NTFY_URL="https://ntfy.example.com"
 NTFY_TOPIC="feuerwehr-alarm"
 
-POLL_INTERVAL_SECONDS="15"
+POLL_SECONDS="15"
 
 WEBHOOK_ENABLED="true"
 WEBHOOK_PORT="8080"
