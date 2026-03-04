@@ -34,26 +34,41 @@ Für Feuerwehren, Hilfsorganisationen oder IT-Verantwortliche, die:
 
 ## Schnellstart (empfohlen mit systemd)
 
+> Diese Anleitung ist für Einsteiger gedacht. Wenn du die Befehle 1:1 übernimmst, hast du in wenigen Minuten ein laufendes System.
+
 ### 1) Voraussetzungen
 
 - Debian/Ubuntu-ähnliches Linux mit systemd
-- Root-Rechte
+- Root-Rechte (oder ein Benutzer mit `sudo`)
 - Netzwerkzugriff auf:
   - DiVeRa API
   - ntfy Server
 
-### 2) Installation
-
-Im Repo-Verzeichnis:
+### 2) Server vorbereiten
 
 ```bash
-sudo bash scripts/install.sh
+sudo apt update && sudo apt full-upgrade -y && sudo apt install nano htop git -y
 ```
 
-Das Script installiert Abhängigkeiten, richtet den Dienst ein und legt eine Beispiel-Konfiguration unter
-`/etc/alarm-gateway/alarm-gateway.env` an.
+### 3) Repository herunterladen
 
-### 3) Konfiguration anpassen
+```bash
+git clone https://github.com/dataklo/divera-ntfy-gateway.git
+cd divera-ntfy-gateway
+```
+
+### 4) Installation starten
+
+```bash
+bash scripts/install.sh
+```
+
+Das Install-Script richtet den Dienst ein und erstellt die Konfigurationsdatei unter:
+`/etc/alarm-gateway/alarm-gateway.env`
+
+### 5) Direkt danach die ENV-Datei bearbeiten
+
+> Wichtig: Nach `bash scripts/install.sh` musst du deine Zugangsdaten in der ENV-Datei eintragen.
 
 ```bash
 sudo nano /etc/alarm-gateway/alarm-gateway.env
@@ -67,18 +82,15 @@ NTFY_URL="https://ntfy.example.com"
 NTFY_TOPIC="<dein-topic>"
 ```
 
-### 4) Dienst neu starten
+### 6) Dienst starten und prüfen
 
 ```bash
 sudo systemctl restart alarm-gateway
 sudo systemctl status alarm-gateway
-```
-
-### 5) Logs prüfen
-
-```bash
 journalctl -u alarm-gateway -f
 ```
+
+Wenn im Log keine Fehler erscheinen, läuft dein Gateway korrekt.
 
 ---
 
@@ -184,17 +196,31 @@ Dann muss der Aufruf einen Timestamp (`ts`) und eine Signatur (`sig`) enthalten
 
 ## Betrieb, Updates, Deinstallation
 
-### Update
+### Update (bestehende Installation aktualisieren)
 
 ```bash
+cd /pfad/zu/divera-ntfy-gateway
+git pull
 sudo bash scripts/update.sh
+sudo systemctl status alarm-gateway
 ```
 
-### Deinstallation
+Damit wird der aktuelle Stand eingespielt und der Dienst aktualisiert.
+
+### Deinstallation (alles wieder entfernen)
 
 ```bash
+cd /pfad/zu/divera-ntfy-gateway
 sudo bash scripts/uninstall.sh
 ```
+
+Optional: Wenn du auch die Konfiguration löschen möchtest:
+
+```bash
+sudo rm -rf /etc/alarm-gateway
+```
+
+Danach ist der Gateway-Dienst entfernt.
 
 ---
 
