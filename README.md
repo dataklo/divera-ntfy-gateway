@@ -144,6 +144,98 @@ PEER_NODES="10.8.0.12:8081,gateway-b.example.de:8081"
 CLUSTER_SHARED_TOKEN="<optional-shared-secret>"
 ```
 
+### Komplette Beispiel-Konfigurationen
+
+#### 1) Single-Node (ein Host, ohne HA)
+
+```env
+# --- Pflichtwerte ---
+DIVERA_ACCESSKEY="divera_accesskey_hier"
+NTFY_URL="https://ntfy.example.com"
+NTFY_TOPIC="feuerwehr-alarm"
+
+# --- Optional ntfy Auth ---
+NTFY_AUTH_TOKEN=""
+
+# --- Polling ---
+POLL_INTERVAL_SECONDS="15"
+
+# --- Priorität ---
+NTFY_DEFAULT_PRIORITY="3"
+NTFY_PRIORITY_KEYWORDS="Probealarm=1,MANV=4"
+
+# --- Webhook (optional aktiviert) ---
+WEBHOOK_ENABLED="true"
+WEBHOOK_PORT="8080"
+WEBHOOK_PATH="/webhook/alarm"
+WEBHOOK_TRIGGER_PATH="/webhook/trigger"
+WEBHOOK_TOKEN=""
+
+# --- Health/Metrics ---
+HEALTH_PORT="8081"
+
+# --- HA/Cluster aus ---
+NODE_ID="gateway-single"
+NODE_PRIORITY="100"
+PEER_NODES=""
+CLUSTER_SHARED_TOKEN=""
+```
+
+#### 2) 2-Node-HA (Node A aktiv bevorzugt, Node B Standby)
+
+`Node A` und `Node B` nutzen identische DiVeRa-/ntfy-Zugangsdaten,
+aber unterschiedliche `NODE_ID` und abgestufte `NODE_PRIORITY`.
+
+**Node A (`/etc/alarm-gateway/alarm-gateway.env`)**
+
+```env
+DIVERA_ACCESSKEY="divera_accesskey_hier"
+NTFY_URL="https://ntfy.example.com"
+NTFY_TOPIC="feuerwehr-alarm"
+
+POLL_INTERVAL_SECONDS="15"
+
+WEBHOOK_ENABLED="true"
+WEBHOOK_PORT="8080"
+WEBHOOK_PATH="/webhook/alarm"
+WEBHOOK_TRIGGER_PATH="/webhook/trigger"
+
+HEALTH_PORT="8081"
+
+NODE_ID="gateway-node-a"
+NODE_PRIORITY="100"
+PEER_NODES="10.10.0.22:8081"
+CLUSTER_SHARED_TOKEN="gemeinsames_cluster_secret"
+```
+
+**Node B (`/etc/alarm-gateway/alarm-gateway.env`)**
+
+```env
+DIVERA_ACCESSKEY="divera_accesskey_hier"
+NTFY_URL="https://ntfy.example.com"
+NTFY_TOPIC="feuerwehr-alarm"
+
+POLL_INTERVAL_SECONDS="15"
+
+WEBHOOK_ENABLED="true"
+WEBHOOK_PORT="8080"
+WEBHOOK_PATH="/webhook/alarm"
+WEBHOOK_TRIGGER_PATH="/webhook/trigger"
+
+HEALTH_PORT="8081"
+
+NODE_ID="gateway-node-b"
+NODE_PRIORITY="90"
+PEER_NODES="10.10.0.21:8081"
+CLUSTER_SHARED_TOKEN="gemeinsames_cluster_secret"
+```
+
+Kurz erklärt:
+
+- Solange `Node A` erreichbar ist, sendet nur `Node A` (höhere Priorität).
+- Fällt `Node A` aus, übernimmt `Node B` automatisch.
+- Nach Recovery geht die aktive Rolle wieder an den Node mit höherer Priorität.
+
 ---
 
 ## Webhook-Nutzung
@@ -254,8 +346,6 @@ Danach ist der Gateway-Dienst entfernt.
 - `scripts/uninstall.sh` – Deinstallation
 - `systemd/alarm-gateway.service` – systemd Unit
 - `tests/` – automatisierte Tests
-
-Wenn du möchtest, kann ich als nächsten Schritt auch eine **komplette Beispiel-Konfiguration für Single-Node** und eine **für 2-Node-HA** direkt in die README ergänzen.
 
 ---
 
