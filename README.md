@@ -39,11 +39,16 @@ Für alle, die **ohne Google-Dienste** arbeiten möchten:
 
 ### 1) Voraussetzungen
 
-- Debian/Ubuntu-ähnliches Linux mit systemd
+- Genau **ein Host mit Linux** für den Betrieb (z. B. Raspberry Pi oder ein vServer)
 - Root-Rechte (oder ein Benutzer mit `sudo`)
+- **Keine öffentliche IP-Adresse erforderlich**, wenn du den öffentlichen ntfy-Server `ntfy.sh` nutzt
+- Die **ntfy App auf dem Smartphone**
 - Netzwerkzugriff auf:
   - DiVeRa API
   - ntfy Server
+
+Als Server für dieses Skript reicht in der Praxis ein **Raspberry Pi** vollkommen aus.
+Alternativ kannst du auch einfach einen **vServer im Internet** bei einem Hoster deiner Wahl buchen.
 
 ### 2) Server vorbereiten
 
@@ -267,3 +272,5 @@ Es wird **keine Haftung** übernommen, insbesondere nicht für:
 - Folgeschäden durch Fehlkonfiguration, Ausfall von Drittanbietern (z. B. DiVeRa/ntfy) oder Systemstörungen.
 
 Bitte prüfe das Verhalten vor dem produktiven Einsatz gründlich in einer Testumgebung und sorge für geeignete Fallback-Prozesse.
+
+Für den Betrieb des Servers selbst bist du selbstverständlich ebenfalls eigenverantwortlich.
