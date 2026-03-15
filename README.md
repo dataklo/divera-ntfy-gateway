@@ -30,6 +30,9 @@ Für alle, die **ohne Google-Dienste** arbeiten möchten:
 - **Health- und Prometheus-Metriken** auf separatem Port.
 - **Audit-Logging** als JSON-Lines.
 - **Keyword-basierte Priorität** (case-insensitive), z. B. `MANV=4`.
+- **Web-Konfigurationsseite** zum Bearbeiten aller bekannten ENV-Parameter im Browser.
+- **Update-Button im Webinterface** (führt optional ein konfiguriertes Update-Kommando aus).
+- **Erweiterte Deduplizierung** verhindert erneute Zustellung bereits bekannter Alarme (z. B. bei nächtlichem Reset im Quellsystem).
 
 ---
 
@@ -257,6 +260,10 @@ WEBHOOK_PORT="8080"
 WEBHOOK_PATH="/webhook/alarm"
 WEBHOOK_TRIGGER_PATH="/webhook/trigger"
 WEBHOOK_TOKEN="<optional-token>"
+WEBHOOK_CONFIG_PATH="/admin/config"
+WEBHOOK_UPDATE_PATH="/admin/update"
+UPDATE_COMMAND="sudo bash /opt/divera-ntfy-gateway/scripts/update.sh"
+DEDUP_RETENTION_HOURS="48"
 ```
 
 ### Endpunkte (Beispiel)
@@ -266,6 +273,7 @@ Bei `WEBHOOK_PORT=8080`, `HEALTH_PORT=8081`:
 - POST JSON: `http://<HOST>:8080/webhook/alarm`
 - GET Trigger: `http://<HOST>:8080/webhook/trigger?...`
 - UI: `http://<HOST>:8080/`
+- Admin-Konfiguration: `http://<HOST>:8080/admin/config`
 - Health: `http://<HOST>:8081/healthz`
 - Metrics: `http://<HOST>:8081/metrics`
 
@@ -314,6 +322,8 @@ sudo systemctl status alarm-gateway
 ```
 
 Damit wird der aktuelle Stand eingespielt und der Dienst aktualisiert.
+
+Wenn `UPDATE_COMMAND` gesetzt ist, kannst du das Update zusätzlich über den Button im Admin-Webinterface starten.
 
 ### Deinstallation (alles wieder entfernen)
 
