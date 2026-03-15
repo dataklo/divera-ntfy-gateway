@@ -16,6 +16,8 @@ import json
 import logging
 import os
 import random
+import shlex
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -30,6 +32,7 @@ DEFAULT_ENV_FILE = "/etc/alarm-gateway/alarm-gateway.env"
 
 
 LOGGER = logging.getLogger("alarm_gateway")
+ENV_DEFINITIONS: List[Dict[str, Any]] = []
 
 
 def configure_logging() -> None:
@@ -82,6 +85,8 @@ DIVERA_ACCESSKEY_PLACEHOLDER = "PASTE_YOUR_DIVERA_ACCESSKEY_HERE"
 
 
 def env(name: str, default: Optional[str] = None, required: bool = False) -> str:
+    if not any(item.get("name") == name for item in ENV_DEFINITIONS):
+        ENV_DEFINITIONS.append({"name": name, "default": default, "required": required})
     val = os.environ.get(name, default)
     if required and (val is None or str(val).strip() == ""):
         raise SystemExit(f"Missing required environment variable: {name}")
@@ -125,6 +130,8 @@ WEBHOOK_PORT = int(env("WEBHOOK_PORT", "8080"))
 WEBHOOK_PATH = env("WEBHOOK_PATH", "/webhook/alarm")
 WEBHOOK_TOKEN = env("WEBHOOK_TOKEN", "")
 WEBHOOK_UI_PATH = env("WEBHOOK_UI_PATH", "/")
+WEBHOOK_CONFIG_PATH = env("WEBHOOK_CONFIG_PATH", "/admin/config")
+WEBHOOK_UPDATE_PATH = env("WEBHOOK_UPDATE_PATH", "/admin/update")
 WEBHOOK_TRIGGER_PATH = env("WEBHOOK_TRIGGER_PATH", "/webhook/trigger")
 WEBHOOK_REPLAY_PROTECTION = env("WEBHOOK_REPLAY_PROTECTION", "false").lower() in ("1", "true", "yes", "on")
 WEBHOOK_MAX_SKEW_SECONDS = int(env("WEBHOOK_MAX_SKEW_SECONDS", "120"))
@@ -144,6 +151,8 @@ CLUSTER_STATUS_TTL_SECONDS = float(env("CLUSTER_STATUS_TTL_SECONDS", "5"))
 CLUSTER_SHARED_TOKEN = env("CLUSTER_SHARED_TOKEN", "")
 
 AUDIT_LOG_FILE = env("AUDIT_LOG_FILE", "")
+UPDATE_COMMAND = env("UPDATE_COMMAND", "")
+DEDUP_RETENTION_HOURS = float(env("DEDUP_RETENTION_HOURS", "48"))
 
 STATE_LOCK = threading.RLock()  # reentrant: some locked paths update metrics
 RUNTIME_METRICS: Dict[str, int] = {
@@ -325,6 +334,12 @@ def validate_runtime_config() -> None:
     if WEBHOOK_ENABLED and not WEBHOOK_TRIGGER_PATH.startswith("/"):
         raise SystemExit("WEBHOOK_TRIGGER_PATH must start with '/'")
 
+    if WEBHOOK_ENABLED and not WEBHOOK_CONFIG_PATH.startswith("/"):
+        raise SystemExit("WEBHOOK_CONFIG_PATH must start with '/'")
+
+    if WEBHOOK_ENABLED and not WEBHOOK_UPDATE_PATH.startswith("/"):
+        raise SystemExit("WEBHOOK_UPDATE_PATH must start with '/'")
+
     if HEALTH_ENABLED and not HEALTH_PATH.startswith("/"):
         raise SystemExit("HEALTH_PATH must start with '/'")
 
@@ -455,7 +470,9 @@ def load_state(path: str) -> Dict[str, Any]:
     default_state = {
         "last_fingerprint": None,
         "active_fingerprints": [],
+        "active_alarm_keys": [],
         "recent_fingerprints": [],
+        "recent_alarm_keys": {},
     }
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -706,6 +723,17 @@ def fingerprint(alarm: Dict[str, Any]) -> str:
     if not raw:
         raw = json.dumps(alarm, sort_keys=True)[:1000]
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def alarm_dedup_key(alarm: Dict[str, Any]) -> str:
+    alarm_id = alarm_id_value(alarm)
+    if alarm_id:
+        return f"id:{alarm_id}"
+
+    title = safe_get(alarm, ["title", "stichwort", "keyword", "einsatzstichwort"]).casefold()
+    address = safe_get(alarm, ["address", "adresse", "ort", "location"]).casefold()
+    text = safe_get(alarm, ["text", "info", "description", "beschreibung", "note"]).casefold()
+    return "content:" + hashlib.sha256(f"{title}|{address}|{text}".encode("utf-8")).hexdigest()
 
 
 def format_alarm(alarm: Dict[str, Any]) -> Tuple[str, str]:
@@ -1013,6 +1041,90 @@ def render_web_form_page(message: str = "", error: bool = False) -> str:
 """
 
 
+def _is_secret_name(name: str) -> bool:
+    upper = name.upper()
+    return any(token in upper for token in ["TOKEN", "SECRET", "PASSWORD", "ACCESSKEY"])
+
+
+def _current_env_value(name: str, default: Optional[str]) -> str:
+    if name in os.environ:
+        return str(os.environ.get(name, ""))
+    if default is None:
+        return ""
+    return str(default)
+
+
+def render_config_page(message: str = "", error: bool = False) -> str:
+    status_html = ""
+    if message:
+        color = "#b00020" if error else "#0a7f2e"
+        status_html = f'<p style="color:{color};font-weight:600;">{_html_escape(message)}</p>'
+
+    rows: List[str] = []
+    for item in sorted(ENV_DEFINITIONS, key=lambda x: str(x.get("name", ""))):
+        name = str(item.get("name", ""))
+        default = item.get("default")
+        value = _current_env_value(name, default)
+        input_type = "password" if _is_secret_name(name) else "text"
+        rows.append(
+            "<tr>"
+            f"<td><code>{_html_escape(name)}</code></td>"
+            f"<td><input name=\"cfg_{_html_escape(name)}\" type=\"{input_type}\" value=\"{_html_escape(value)}\" style=\"width:100%;padding:0.4rem;\"/></td>"
+            f"<td><small>{_html_escape(str(default) if default is not None else '')}</small></td>"
+            "</tr>"
+        )
+
+    return f"""<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Alarm Gateway Konfiguration</title>
+</head>
+<body style="font-family:Arial,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;">
+  <h1>Konfiguration</h1>
+  <p>Diese Seite zeigt alle bekannten Umgebungsvariablen. Neue Variablen aus Updates erscheinen automatisch.</p>
+  {status_html}
+  <form method="post" action="{_html_escape(WEBHOOK_CONFIG_PATH)}" style="margin-bottom:1.5rem;">
+    <table style="width:100%;border-collapse:collapse;">
+      <thead><tr><th style="text-align:left;">Variable</th><th style="text-align:left;">Wert</th><th style="text-align:left;">Default</th></tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
+    <p><button type="submit" style="padding:0.6rem 1rem;">Konfiguration speichern</button></p>
+  </form>
+  <form method="post" action="{_html_escape(WEBHOOK_UPDATE_PATH)}">
+    <button type="submit" style="padding:0.6rem 1rem;">Update starten</button>
+    <small>Command: <code>{_html_escape(UPDATE_COMMAND or 'nicht konfiguriert')}</code></small>
+  </form>
+</body>
+</html>
+"""
+
+
+def save_config_to_env_file(values: Dict[str, str]) -> None:
+    env_file_path = os.environ.get("ALARM_GATEWAY_ENV_FILE", DEFAULT_ENV_FILE)
+    os.makedirs(os.path.dirname(env_file_path), exist_ok=True)
+    lines = [
+        "# alarm-gateway environment file",
+        "# managed by web configuration",
+    ]
+    for item in sorted(ENV_DEFINITIONS, key=lambda x: str(x.get("name", ""))):
+        name = str(item.get("name", ""))
+        val = values.get(name, _current_env_value(name, item.get("default")))
+        escaped = val.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'{name}="{escaped}"')
+        os.environ[name] = val
+
+    with open(env_file_path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
+def start_update_command() -> None:
+    if not UPDATE_COMMAND.strip():
+        raise RuntimeError("UPDATE_COMMAND ist nicht gesetzt")
+    subprocess.Popen(shlex.split(UPDATE_COMMAND), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def parse_form_urlencoded(raw_body: bytes) -> Dict[str, str]:
     from urllib.parse import parse_qs
 
@@ -1074,6 +1186,13 @@ def make_webhook_handler(state: Dict[str, Any]):
                 self._send_html(200, render_web_form_page())
                 return
 
+            if request_path == WEBHOOK_CONFIG_PATH:
+                if not _is_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                self._send_html(200, render_config_page())
+                return
+
             if request_path == WEBHOOK_TRIGGER_PATH:
                 metric_inc("webhook_requests")
                 if not _is_authorized(self.headers, query_params):
@@ -1131,6 +1250,36 @@ def make_webhook_handler(state: Dict[str, Any]):
                 except Exception as exc:
                     metric_inc("webhook_error")
                     self._send_html(400, render_web_form_page(f"Fehler: {exc}", error=True))
+                return
+
+            if request_path == WEBHOOK_CONFIG_PATH:
+                if not _is_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+
+                content_length = int(self.headers.get("Content-Length", "0") or "0")
+                body = self.rfile.read(content_length)
+                try:
+                    payload = parse_form_urlencoded(body)
+                    values: Dict[str, str] = {}
+                    for key, value in payload.items():
+                        if key.startswith("cfg_"):
+                            values[key[len("cfg_"):]] = str(value)
+                    save_config_to_env_file(values)
+                    self._send_html(200, render_config_page("Konfiguration gespeichert. Neustart empfohlen."))
+                except Exception as exc:
+                    self._send_html(400, render_config_page(f"Fehler: {exc}", error=True))
+                return
+
+            if request_path == WEBHOOK_UPDATE_PATH:
+                if not _is_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                try:
+                    start_update_command()
+                    self._send_html(200, render_config_page("Update wurde gestartet."))
+                except Exception as exc:
+                    self._send_html(400, render_config_page(f"Fehler: {exc}", error=True))
                 return
 
             self._send_json(404, {"error": "not found"})
@@ -1245,13 +1394,27 @@ def handle_divera_poll(state: Dict[str, Any]) -> None:
     recent_set = set(recent)
 
     current_fingerprints: List[str] = []
+    current_alarm_keys: List[str] = []
     any_sent = False
+
+    now_ts = int(time.time())
+    dedup_cutoff = now_ts - int(max(1.0, DEDUP_RETENTION_HOURS) * 3600)
+    with STATE_LOCK:
+        recent_keys_raw = state.get("recent_alarm_keys", {})
+    recent_alarm_keys = {
+        str(k): int(v)
+        for k, v in (recent_keys_raw.items() if isinstance(recent_keys_raw, dict) else [])
+        if isinstance(k, str) and isinstance(v, (int, float)) and int(v) >= dedup_cutoff
+    }
+    prev_active_keys = set(state.get("active_alarm_keys", []))
 
     for alarm in alarms:
         fp = fingerprint(alarm)
+        dedup_key = alarm_dedup_key(alarm)
         current_fingerprints.append(fp)
+        current_alarm_keys.append(dedup_key)
 
-        if fp in prev_active or fp in recent_set:
+        if fp in prev_active or fp in recent_set or dedup_key in prev_active_keys or dedup_key in recent_alarm_keys:
             continue
 
         title, msg = format_alarm(alarm)
@@ -1259,10 +1422,13 @@ def handle_divera_poll(state: Dict[str, Any]) -> None:
         any_sent = True
         recent.append(fp)
         recent_set.add(fp)
+        recent_alarm_keys[dedup_key] = now_ts
 
     with STATE_LOCK:
         state["active_fingerprints"] = list(dict.fromkeys(current_fingerprints))
+        state["active_alarm_keys"] = list(dict.fromkeys(current_alarm_keys))
         state["recent_fingerprints"] = recent[-500:]
+        state["recent_alarm_keys"] = dict(list(recent_alarm_keys.items())[-2000:])
 
         latest = pick_latest_alarm(alarms)
         state["last_fingerprint"] = fingerprint(latest) if latest else None

@@ -127,6 +127,67 @@ class DeliveryAndSecurityTests(unittest.TestCase):
         self.assertEqual(len(sleep_calls), 1)
         self.assertAlmostEqual(sleep_calls[0], 1.7, places=5)
 
+    def test_dedup_key_uses_alarm_id_when_present(self):
+        alarm = {'id': '4711', 'title': 'Probealarm'}
+        self.assertEqual(self.module.alarm_dedup_key(alarm), 'id:4711')
+
+    def test_dedup_key_falls_back_to_content_hash(self):
+        alarm = {'title': 'Probealarm', 'address': 'Musterstrasse', 'text': 'Test'}
+        key = self.module.alarm_dedup_key(alarm)
+        self.assertTrue(key.startswith('content:'))
+
+    def test_handle_divera_poll_deduplicates_repeated_alarm_ids(self):
+        state = self.module.load_state('/tmp/nonexistent-state.json')
+        state['active_fingerprints'] = []
+        state['recent_fingerprints'] = []
+        state['active_alarm_keys'] = []
+        state['recent_alarm_keys'] = {'id:123': int(self.module.time.time())}
+
+        alarm_payload = {'alarms': [{'id': '123', 'title': 'Probealarm', 'text': 'Test'}]}
+
+        sent = []
+        old_fetch = self.module.fetch_alarms
+        old_publish = self.module.publish_message
+        old_save = self.module.save_state
+        old_resolve_cluster = self.module.resolve_cluster_status
+        try:
+            self.module.fetch_alarms = lambda: alarm_payload
+            self.module.publish_message = lambda *_args, **_kwargs: sent.append('sent')
+            self.module.save_state = lambda *_args, **_kwargs: None
+            self.module.resolve_cluster_status = lambda force_refresh=False: {
+                'leader_id': self.module.NODE_ID,
+                'leader_priority': self.module.NODE_PRIORITY,
+                'reachable': [self.module.NODE_ID],
+            }
+            self.module.handle_divera_poll(state)
+        finally:
+            self.module.fetch_alarms = old_fetch
+            self.module.publish_message = old_publish
+            self.module.save_state = old_save
+            self.module.resolve_cluster_status = old_resolve_cluster
+
+        self.assertEqual(sent, [])
+
+    def test_save_config_to_env_file_writes_known_variables(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = f"{tmp}/alarm-gateway.env"
+            old_env_file = os.environ.get('ALARM_GATEWAY_ENV_FILE')
+            try:
+                os.environ['ALARM_GATEWAY_ENV_FILE'] = env_file
+                self.module.save_config_to_env_file({'NTFY_TOPIC': 'new-topic', 'WEBHOOK_ENABLED': 'true'})
+            finally:
+                if old_env_file is None:
+                    os.environ.pop('ALARM_GATEWAY_ENV_FILE', None)
+                else:
+                    os.environ['ALARM_GATEWAY_ENV_FILE'] = old_env_file
+
+            content = open(env_file, 'r', encoding='utf-8').read()
+            self.assertIn('NTFY_TOPIC="new-topic"', content)
+            self.assertIn('WEBHOOK_ENABLED="true"', content)
+
+
 
 if __name__ == '__main__':
     unittest.main()
