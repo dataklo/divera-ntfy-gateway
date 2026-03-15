@@ -176,7 +176,7 @@ POLL_SECONDS="15"
 NTFY_DEFAULT_PRIORITY="3"
 NTFY_PRIORITY_KEYWORDS="Probealarm=1,MANV=4"
 
-# --- Webhook (optional aktiviert) ---
+# --- Webhook (standardmäßig aktiv) ---
 WEBHOOK_ENABLED="true"
 WEBHOOK_PORT="8080"
 WEBHOOK_PATH="/webhook/alarm"
@@ -252,7 +252,31 @@ Kurz erklärt:
 
 ## Webhook-Nutzung
 
-Webhook-Funktion aktivieren:
+### Webinterface-Defaults
+
+Das Webinterface ist **standardmäßig aktiv** (`WEBHOOK_ENABLED="true"`).
+
+Default-Werte:
+
+- `WEBHOOK_PORT="8080"`
+- `WEBHOOK_UI_PATH="/"`
+- `WEBHOOK_CONFIG_PATH="/admin/config"`
+
+Damit sind die Seiten ohne weitere Anpassung hier erreichbar:
+
+- UI (Alarm-Formular): `http://<HOST>:8080/`
+- Admin-Konfiguration: `http://<HOST>:8080/admin/config`
+
+Falls du das Webinterface nicht nutzen möchtest, setze:
+
+```env
+WEBHOOK_ENABLED="false"
+```
+
+Wenn `WEBHOOK_TOKEN` gesetzt ist, ist zusätzlich Authentifizierung per
+`Authorization: Bearer <token>` oder `?token=<token>` nötig.
+
+Webhook-Funktion (Default-Konfiguration):
 
 ```env
 WEBHOOK_ENABLED="true"
