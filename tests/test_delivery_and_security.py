@@ -214,6 +214,14 @@ class DeliveryAndSecurityTests(unittest.TestCase):
         self.assertIn('id="cfg-search"', html)
         self.assertIn('DiVeRa API', html)
 
+    def test_render_web_form_page_includes_config_link(self):
+        html = self.module.render_web_form_page()
+        self.assertIn('href="/admin/config"', html)
+
+    def test_render_web_form_page_persists_query_token_in_config_link(self):
+        html = self.module.render_web_form_page(auth_token='abc123')
+        self.assertIn('href="/admin/config?token=abc123"', html)
+
 
 
 if __name__ == '__main__':
