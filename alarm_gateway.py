@@ -184,7 +184,7 @@ VERIFY_TLS = env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
 DEBUG_DIVERA = env("DEBUG_DIVERA", "false").lower() in ("1", "true", "yes", "on")
 
 
-WEBHOOK_ENABLED = env("WEBHOOK_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+WEBHOOK_ENABLED = env("WEBHOOK_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 WEBHOOK_BIND = env("WEBHOOK_BIND", "0.0.0.0")
 WEBHOOK_PORT = int(env("WEBHOOK_PORT", "8080"))
 WEBHOOK_PATH = env("WEBHOOK_PATH", "/webhook/alarm")
