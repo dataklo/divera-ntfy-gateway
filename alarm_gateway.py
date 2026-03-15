@@ -1012,6 +1012,13 @@ def _html_escape(value: str) -> str:
     )
 
 
+def _path_with_token(path: str, token: str) -> str:
+    if not token:
+        return path
+    separator = "&" if "?" in path else "?"
+    return f"{path}{separator}token={token}"
+
+
 def render_web_form_page(message: str = "", error: bool = False) -> str:
     status_html = ""
     if message:
@@ -1054,7 +1061,7 @@ def _current_env_value(name: str, default: Optional[str]) -> str:
     return str(default)
 
 
-def render_config_page(message: str = "", error: bool = False) -> str:
+def render_config_page(message: str = "", error: bool = False, auth_token: str = "") -> str:
     status_html = ""
     if message:
         color = "#b00020" if error else "#0a7f2e"
@@ -1074,6 +1081,9 @@ def render_config_page(message: str = "", error: bool = False) -> str:
             "</tr>"
         )
 
+    config_action = _path_with_token(WEBHOOK_CONFIG_PATH, auth_token)
+    update_action = _path_with_token(WEBHOOK_UPDATE_PATH, auth_token)
+
     return f"""<!doctype html>
 <html lang="de">
 <head>
@@ -1085,14 +1095,14 @@ def render_config_page(message: str = "", error: bool = False) -> str:
   <h1>Konfiguration</h1>
   <p>Diese Seite zeigt alle bekannten Umgebungsvariablen. Neue Variablen aus Updates erscheinen automatisch.</p>
   {status_html}
-  <form method="post" action="{_html_escape(WEBHOOK_CONFIG_PATH)}" style="margin-bottom:1.5rem;">
+  <form method="post" action="{_html_escape(config_action)}" style="margin-bottom:1.5rem;">
     <table style="width:100%;border-collapse:collapse;">
       <thead><tr><th style="text-align:left;">Variable</th><th style="text-align:left;">Wert</th><th style="text-align:left;">Default</th></tr></thead>
       <tbody>{''.join(rows)}</tbody>
     </table>
     <p><button type="submit" style="padding:0.6rem 1rem;">Konfiguration speichern</button></p>
   </form>
-  <form method="post" action="{_html_escape(WEBHOOK_UPDATE_PATH)}">
+  <form method="post" action="{_html_escape(update_action)}">
     <button type="submit" style="padding:0.6rem 1rem;">Update starten</button>
     <small>Command: <code>{_html_escape(UPDATE_COMMAND or 'nicht konfiguriert')}</code></small>
   </form>
@@ -1190,6 +1200,12 @@ def make_webhook_handler(state: Dict[str, Any]):
             self.end_headers()
             self.wfile.write(encoded)
 
+        def _authorized_token_from_query(self, query_params: Dict[str, str]) -> str:
+            candidate = str(query_params.get("token", "")).strip()
+            if WEBHOOK_TOKEN and candidate == WEBHOOK_TOKEN:
+                return candidate
+            return ""
+
         def do_GET(self) -> None:  # noqa: N802
             request_path, query_params = parse_query_params(self.path)
 
@@ -1201,7 +1217,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                 if not _is_authorized(self.headers, query_params):
                     self._send_json(401, {"error": "unauthorized"})
                     return
-                self._send_html(200, render_config_page())
+                self._send_html(200, render_config_page(auth_token=self._authorized_token_from_query(query_params)))
                 return
 
             if path_matches(request_path, WEBHOOK_TRIGGER_PATH):
@@ -1277,9 +1293,22 @@ def make_webhook_handler(state: Dict[str, Any]):
                         if key.startswith("cfg_"):
                             values[key[len("cfg_"):]] = str(value)
                     save_config_to_env_file(values)
-                    self._send_html(200, render_config_page("Konfiguration gespeichert. Neustart empfohlen."))
+                    self._send_html(
+                        200,
+                        render_config_page(
+                            "Konfiguration gespeichert. Neustart empfohlen.",
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
                 except Exception as exc:
-                    self._send_html(400, render_config_page(f"Fehler: {exc}", error=True))
+                    self._send_html(
+                        400,
+                        render_config_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
                 return
 
             if path_matches(request_path, WEBHOOK_UPDATE_PATH):
@@ -1288,9 +1317,19 @@ def make_webhook_handler(state: Dict[str, Any]):
                     return
                 try:
                     start_update_command()
-                    self._send_html(200, render_config_page("Update wurde gestartet."))
+                    self._send_html(
+                        200,
+                        render_config_page("Update wurde gestartet.", auth_token=self._authorized_token_from_query(query_params)),
+                    )
                 except Exception as exc:
-                    self._send_html(400, render_config_page(f"Fehler: {exc}", error=True))
+                    self._send_html(
+                        400,
+                        render_config_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
                 return
 
             self._send_json(404, {"error": "not found"})
