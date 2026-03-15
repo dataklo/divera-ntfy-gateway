@@ -183,7 +183,8 @@ class DeliveryAndSecurityTests(unittest.TestCase):
                 else:
                     os.environ['ALARM_GATEWAY_ENV_FILE'] = old_env_file
 
-            content = open(env_file, 'r', encoding='utf-8').read()
+            with open(env_file, 'r', encoding='utf-8') as handle:
+                content = handle.read()
             self.assertIn('NTFY_TOPIC="new-topic"', content)
             self.assertIn('WEBHOOK_ENABLED="true"', content)
 
@@ -193,6 +194,44 @@ class DeliveryAndSecurityTests(unittest.TestCase):
 
     def test_path_matches_rejects_different_path(self):
         self.assertFalse(self.module.path_matches('/admin/configuration', '/admin/config'))
+
+    def test_get_update_availability_reports_missing_check_command(self):
+        old_cmd = self.module.UPDATE_CHECK_COMMAND
+        try:
+            self.module.UPDATE_CHECK_COMMAND = ''
+            state, hint = self.module.get_update_availability()
+        finally:
+            self.module.UPDATE_CHECK_COMMAND = old_cmd
+
+        self.assertEqual(state, 'unknown')
+        self.assertEqual(hint, 'Kein Update-Check konfiguriert')
+
+    def test_get_update_availability_uses_exit_code_mapping(self):
+        old_cmd = self.module.UPDATE_CHECK_COMMAND
+        old_run = self.module.subprocess.run
+
+        class Result:
+            def __init__(self, returncode, stdout='', stderr=''):
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+
+        try:
+            self.module.UPDATE_CHECK_COMMAND = 'dummy-check'
+            self.module.subprocess.run = lambda *_args, **_kwargs: Result(0, stdout='2 commits behind')
+            state, hint = self.module.get_update_availability()
+            self.assertEqual((state, hint), ('available', '2 commits behind'))
+
+            self.module.subprocess.run = lambda *_args, **_kwargs: Result(1, stdout='up to date')
+            state, hint = self.module.get_update_availability()
+            self.assertEqual((state, hint), ('up-to-date', 'up to date'))
+
+            self.module.subprocess.run = lambda *_args, **_kwargs: Result(5, stderr='failed')
+            state, hint = self.module.get_update_availability()
+            self.assertEqual((state, hint), ('unknown', 'failed'))
+        finally:
+            self.module.UPDATE_CHECK_COMMAND = old_cmd
+            self.module.subprocess.run = old_run
 
     def test_render_config_page_shows_update_status(self):
         old_get_update = self.module.get_update_availability

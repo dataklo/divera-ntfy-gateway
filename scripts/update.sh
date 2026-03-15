@@ -5,6 +5,54 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="/opt/alarm-gateway"
 SERVICE_FILE="/etc/systemd/system/alarm-gateway.service"
 
+is_git_repo() {
+  git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+check_for_update() {
+  if ! is_git_repo; then
+    echo "[i] Kein Git-Repository unter $REPO_ROOT gefunden."
+    return 1
+  fi
+
+  local branch upstream ahead behind
+  branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+
+  if ! upstream="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref --symbolic-full-name "${branch}@{upstream}" 2>/dev/null)"; then
+    echo "[i] Kein Upstream für Branch '$branch' konfiguriert."
+    return 1
+  fi
+
+  git -C "$REPO_ROOT" fetch --quiet
+  read -r ahead behind < <(git -C "$REPO_ROOT" rev-list --left-right --count "${upstream}...HEAD")
+
+  if (( ahead > 0 )); then
+    echo "[i] Lokaler Branch ist $ahead Commit(s) vor $upstream."
+    return 1
+  fi
+
+  if (( behind > 0 )); then
+    echo "Update verfügbar ($behind Commit(s) hinter $upstream)."
+    return 0
+  fi
+
+  echo "Kein Update verfügbar."
+  return 1
+}
+
+if [[ "${1:-}" == "--check" ]]; then
+  check_for_update
+  exit $?
+fi
+
+if is_git_repo; then
+  echo "[*] Synchronizing repository in $REPO_ROOT ..."
+  git -C "$REPO_ROOT" fetch --quiet
+  git -C "$REPO_ROOT" pull --ff-only
+else
+  echo "[i] Kein Git-Repository unter $REPO_ROOT gefunden - überspringe git pull."
+fi
+
 echo "[*] Updating application files in $APP_DIR ..."
 rsync -a --delete \
   --exclude ".git" \

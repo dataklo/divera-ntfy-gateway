@@ -98,6 +98,10 @@ HEALTH_BIND="0.0.0.0"
 HEALTH_PORT="8081"
 HEALTH_PATH="/healthz"
 HEALTH_METRICS_PATH="/metrics"
+
+# Web-Update
+UPDATE_COMMAND="sudo bash /opt/divera-ntfy-gateway/scripts/update.sh"
+UPDATE_CHECK_COMMAND="bash /opt/divera-ntfy-gateway/scripts/update.sh --check"
 EOF
   chmod 0640 "$ENV_DIR/alarm-gateway.env"
   chown root:"$USER_NAME" "$ENV_DIR/alarm-gateway.env"
