@@ -1140,6 +1140,17 @@ def parse_query_params(path: str) -> Tuple[str, Dict[str, str]]:
     return parsed.path, {k: (v[0] if v else "") for k, v in query.items()}
 
 
+def path_matches(request_path: str, configured_path: str) -> bool:
+    """Match request path against configured path and tolerate trailing slashes."""
+    if request_path == configured_path:
+        return True
+
+    if configured_path != "/" and request_path.rstrip("/") == configured_path.rstrip("/"):
+        return True
+
+    return False
+
+
 def _is_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
     if not WEBHOOK_TOKEN:
         return True
@@ -1182,18 +1193,18 @@ def make_webhook_handler(state: Dict[str, Any]):
         def do_GET(self) -> None:  # noqa: N802
             request_path, query_params = parse_query_params(self.path)
 
-            if request_path == WEBHOOK_UI_PATH:
+            if path_matches(request_path, WEBHOOK_UI_PATH):
                 self._send_html(200, render_web_form_page())
                 return
 
-            if request_path == WEBHOOK_CONFIG_PATH:
+            if path_matches(request_path, WEBHOOK_CONFIG_PATH):
                 if not _is_authorized(self.headers, query_params):
                     self._send_json(401, {"error": "unauthorized"})
                     return
                 self._send_html(200, render_config_page())
                 return
 
-            if request_path == WEBHOOK_TRIGGER_PATH:
+            if path_matches(request_path, WEBHOOK_TRIGGER_PATH):
                 metric_inc("webhook_requests")
                 if not _is_authorized(self.headers, query_params):
                     metric_inc("webhook_error")
@@ -1213,7 +1224,7 @@ def make_webhook_handler(state: Dict[str, Any]):
         def do_POST(self) -> None:  # noqa: N802
             request_path, query_params = parse_query_params(self.path)
 
-            if request_path == WEBHOOK_PATH:
+            if path_matches(request_path, WEBHOOK_PATH):
                 metric_inc("webhook_requests")
 
                 if not _is_authorized(self.headers, query_params):
@@ -1239,7 +1250,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                     self._send_json(400, {"error": str(exc)})
                 return
 
-            if request_path == WEBHOOK_UI_PATH:
+            if path_matches(request_path, WEBHOOK_UI_PATH):
                 metric_inc("webhook_requests")
                 content_length = int(self.headers.get("Content-Length", "0") or "0")
                 body = self.rfile.read(content_length)
@@ -1252,7 +1263,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                     self._send_html(400, render_web_form_page(f"Fehler: {exc}", error=True))
                 return
 
-            if request_path == WEBHOOK_CONFIG_PATH:
+            if path_matches(request_path, WEBHOOK_CONFIG_PATH):
                 if not _is_authorized(self.headers, query_params):
                     self._send_json(401, {"error": "unauthorized"})
                     return
@@ -1271,7 +1282,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                     self._send_html(400, render_config_page(f"Fehler: {exc}", error=True))
                 return
 
-            if request_path == WEBHOOK_UPDATE_PATH:
+            if path_matches(request_path, WEBHOOK_UPDATE_PATH):
                 if not _is_authorized(self.headers, query_params):
                     self._send_json(401, {"error": "unauthorized"})
                     return

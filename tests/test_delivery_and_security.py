@@ -187,6 +187,13 @@ class DeliveryAndSecurityTests(unittest.TestCase):
             self.assertIn('NTFY_TOPIC="new-topic"', content)
             self.assertIn('WEBHOOK_ENABLED="true"', content)
 
+    def test_path_matches_accepts_trailing_slash(self):
+        self.assertTrue(self.module.path_matches('/admin/config/', '/admin/config'))
+        self.assertTrue(self.module.path_matches('/admin/config', '/admin/config/'))
+
+    def test_path_matches_rejects_different_path(self):
+        self.assertFalse(self.module.path_matches('/admin/configuration', '/admin/config'))
+
 
 
 if __name__ == '__main__':
