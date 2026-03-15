@@ -287,6 +287,7 @@ WEBHOOK_TOKEN="<optional-token>"
 WEBHOOK_CONFIG_PATH="/admin/config"
 WEBHOOK_UPDATE_PATH="/admin/update"
 UPDATE_COMMAND="sudo bash /opt/divera-ntfy-gateway/scripts/update.sh"
+UPDATE_CHECK_COMMAND="bash /opt/divera-ntfy-gateway/scripts/update.sh --check"
 DEDUP_RETENTION_HOURS="48"
 ```
 
@@ -345,7 +346,14 @@ sudo bash scripts/update.sh
 sudo systemctl status alarm-gateway
 ```
 
-Damit wird der aktuelle Stand eingespielt und der Dienst aktualisiert.
+Damit wird zuerst ein `git pull --ff-only` ausgeführt, anschließend der aktuelle Stand eingespielt und der Dienst neu gestartet.
+
+Für den Status im Admin-Webinterface konfigurierst du zusätzlich einen Update-Check (Exitcode `0` = Update verfügbar, `1` = kein Update):
+
+```env
+UPDATE_COMMAND="sudo bash /opt/divera-ntfy-gateway/scripts/update.sh"
+UPDATE_CHECK_COMMAND="bash /opt/divera-ntfy-gateway/scripts/update.sh --check"
+```
 
 Wenn `UPDATE_COMMAND` gesetzt ist, kannst du das Update zusätzlich über den Button im Admin-Webinterface starten.
 
