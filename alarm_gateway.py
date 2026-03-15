@@ -1080,11 +1080,13 @@ def _path_with_token(path: str, token: str) -> str:
     return f"{path}{separator}token={token}"
 
 
-def render_web_form_page(message: str = "", error: bool = False) -> str:
+def render_web_form_page(message: str = "", error: bool = False, auth_token: str = "") -> str:
     status_html = ""
     if message:
         color = "#b00020" if error else "#0a7f2e"
         status_html = f'<p style="color:{color};font-weight:600;">{_html_escape(message)}</p>'
+
+    config_link = _path_with_token(WEBHOOK_CONFIG_PATH, auth_token)
 
     return f"""<!doctype html>
 <html lang="de">
@@ -1094,6 +1096,9 @@ def render_web_form_page(message: str = "", error: bool = False) -> str:
   <title>Alarm Gateway Webformular</title>
 </head>
 <body style="font-family:Arial,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;">
+  <div style="display:flex;justify-content:flex-end;margin-bottom:0.8rem;">
+    <a href="{_html_escape(config_link)}" style="text-decoration:none;color:#1f6feb;font-weight:600;">Zur Web-Konfiguration</a>
+  </div>
   <h1>Alarm manuell senden</h1>
   <p>Felder: Titel, Beschreibung, Adresse, Priorität (1-5).</p>
   {status_html}
@@ -1385,7 +1390,7 @@ def make_webhook_handler(state: Dict[str, Any]):
             request_path, query_params = parse_query_params(self.path)
 
             if path_matches(request_path, WEBHOOK_UI_PATH):
-                self._send_html(200, render_web_form_page())
+                self._send_html(200, render_web_form_page(auth_token=self._authorized_token_from_query(query_params)))
                 return
 
             if path_matches(request_path, WEBHOOK_CONFIG_PATH):
@@ -1448,10 +1453,23 @@ def make_webhook_handler(state: Dict[str, Any]):
                 try:
                     payload = parse_form_urlencoded(body)
                     handle_webhook_alarm(payload, state)
-                    self._send_html(200, render_web_form_page("Alarm wurde gesendet."))
+                    self._send_html(
+                        200,
+                        render_web_form_page(
+                            "Alarm wurde gesendet.",
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
                 except Exception as exc:
                     metric_inc("webhook_error")
-                    self._send_html(400, render_web_form_page(f"Fehler: {exc}", error=True))
+                    self._send_html(
+                        400,
+                        render_web_form_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
                 return
 
             if path_matches(request_path, WEBHOOK_CONFIG_PATH):
