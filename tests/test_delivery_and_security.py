@@ -194,11 +194,25 @@ class DeliveryAndSecurityTests(unittest.TestCase):
     def test_path_matches_rejects_different_path(self):
         self.assertFalse(self.module.path_matches('/admin/configuration', '/admin/config'))
 
+    def test_render_config_page_shows_update_status(self):
+        old_get_update = self.module.get_update_availability
+        try:
+            self.module.get_update_availability = lambda: ('available', 'Neue Version gefunden')
+            html = self.module.render_config_page(auth_token='abc123')
+        finally:
+            self.module.get_update_availability = old_get_update
+
+        self.assertIn('>Update<', html)
+        self.assertIn('available', html)
+        self.assertIn('Neue Version gefunden', html)
+
     def test_render_config_page_persists_query_token_in_form_actions(self):
         html = self.module.render_config_page(auth_token='abc123')
 
         self.assertIn('action="/admin/config?token=abc123"', html)
         self.assertIn('action="/admin/update?token=abc123"', html)
+        self.assertIn('id="cfg-search"', html)
+        self.assertIn('DiVeRa API', html)
 
 
 

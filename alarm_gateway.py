@@ -35,6 +35,66 @@ LOGGER = logging.getLogger("alarm_gateway")
 ENV_DEFINITIONS: List[Dict[str, Any]] = []
 
 
+WEB_CONFIG_SECTIONS: List[Tuple[str, str]] = [
+    ("general", "Allgemein"),
+    ("divera", "DiVeRa API"),
+    ("ntfy", "ntfy Push"),
+    ("web", "Webhook & Web"),
+    ("cluster", "Cluster"),
+    ("runtime", "Laufzeit & Logging"),
+    ("security", "Sicherheit"),
+]
+
+
+WEB_CONFIG_FIELDS: List[Dict[str, str]] = [
+    {"name": "DIVERA_URL", "label": "DiVeRa URL", "section": "divera", "help": "Primäre API-URL für Alarme."},
+    {"name": "DIVERA_FALLBACK_URL", "label": "DiVeRa Fallback URL", "section": "divera", "help": "Alternative URL falls die primäre URL ausfällt."},
+    {"name": "DIVERA_ACCESSKEY", "label": "DiVeRa Access Key", "section": "security", "help": "API-Schlüssel für DiVeRa.", "secret": "true"},
+    {"name": "POLL_SECONDS", "label": "Poll-Intervall (Sekunden)", "section": "general", "help": "Wie oft DiVeRa abgefragt wird."},
+    {"name": "STATE_FILE", "label": "State-Datei", "section": "runtime", "help": "Datei für deduplizierte Alarm-Zustände."},
+    {"name": "NTFY_URL", "label": "ntfy URL", "section": "ntfy", "help": "Basis-URL des ntfy Servers."},
+    {"name": "NTFY_TOPIC", "label": "ntfy Topic", "section": "ntfy", "help": "Ziel-Topic für Push-Nachrichten."},
+    {"name": "NTFY_AUTH_TOKEN", "label": "ntfy Auth-Token", "section": "security", "help": "Bearer Token für ntfy.", "secret": "true"},
+    {"name": "NTFY_DEFAULT_PRIORITY", "label": "Standard-Priorität", "section": "ntfy", "help": "Fallback-Priorität (1-5)."},
+    {"name": "NTFY_PRIORITY_KEYWORDS", "label": "Prioritäts-Keywords", "section": "ntfy", "help": "Format: keyword=prio,keyword=prio."},
+    {"name": "NTFY_FALLBACK_URLS", "label": "ntfy Fallback URLs", "section": "ntfy", "help": "Kommagetrennte Liste alternativer ntfy URLs."},
+    {"name": "NTFY_RETRY_ATTEMPTS", "label": "Retry-Versuche", "section": "ntfy", "help": "Wie oft ntfy-Senden wiederholt wird."},
+    {"name": "NTFY_RETRY_DELAY_SECONDS", "label": "Retry-Delay", "section": "ntfy", "help": "Wartezeit zwischen Retries in Sekunden."},
+    {"name": "NTFY_RETRY_JITTER_SECONDS", "label": "Retry-Jitter", "section": "ntfy", "help": "Zusätzlicher zufälliger Delay in Sekunden."},
+    {"name": "WEBHOOK_ENABLED", "label": "Webhook aktiv", "section": "web", "help": "true/false"},
+    {"name": "WEBHOOK_BIND", "label": "Webhook Bind-Adresse", "section": "web", "help": "Adresse für HTTP-Server Bind."},
+    {"name": "WEBHOOK_PORT", "label": "Webhook Port", "section": "web", "help": "Port für Webhook/Weboberfläche."},
+    {"name": "WEBHOOK_PATH", "label": "Webhook POST-Pfad", "section": "web", "help": "Pfad für eingehende Webhooks."},
+    {"name": "WEBHOOK_UI_PATH", "label": "Webformular-Pfad", "section": "web", "help": "Pfad für das manuelle Alarm-Formular."},
+    {"name": "WEBHOOK_TRIGGER_PATH", "label": "GET-Trigger-Pfad", "section": "web", "help": "Pfad für einfachen GET-Trigger."},
+    {"name": "WEBHOOK_CONFIG_PATH", "label": "Konfigurations-Pfad", "section": "web", "help": "Pfad der Admin-Konfigurationsseite."},
+    {"name": "WEBHOOK_UPDATE_PATH", "label": "Update-Pfad", "section": "web", "help": "Pfad für Update-Trigger im Webinterface."},
+    {"name": "WEBHOOK_TOKEN", "label": "Webhook Token", "section": "security", "help": "Bearer oder query token=...", "secret": "true"},
+    {"name": "WEBHOOK_REPLAY_PROTECTION", "label": "Replay-Schutz aktiv", "section": "security", "help": "true/false"},
+    {"name": "WEBHOOK_MAX_SKEW_SECONDS", "label": "Max. Replay-Skew", "section": "security", "help": "Max. erlaubte Zeitabweichung in Sekunden."},
+    {"name": "WEBHOOK_HMAC_SECRET", "label": "Webhook HMAC Secret", "section": "security", "help": "Secret für Replay-Signaturen.", "secret": "true"},
+    {"name": "HEALTH_ENABLED", "label": "Health-Endpoint aktiv", "section": "web", "help": "true/false"},
+    {"name": "HEALTH_BIND", "label": "Health Bind-Adresse", "section": "web", "help": "Adresse für Health HTTP Server."},
+    {"name": "HEALTH_PORT", "label": "Health Port", "section": "web", "help": "Port für /healthz und /metrics."},
+    {"name": "HEALTH_PATH", "label": "Health-Pfad", "section": "web", "help": "Pfad für Healthcheck."},
+    {"name": "HEALTH_METRICS_PATH", "label": "Metrics-Pfad", "section": "web", "help": "Pfad für Prometheus-Metriken."},
+    {"name": "NODE_ID", "label": "Node ID", "section": "cluster", "help": "Name dieser Instanz im Cluster."},
+    {"name": "NODE_PRIORITY", "label": "Node Priorität", "section": "cluster", "help": "Höhere Zahl bevorzugt Leader-Rolle."},
+    {"name": "PEER_NODES", "label": "Peer Nodes", "section": "cluster", "help": "Kommagetrennte Liste anderer Nodes."},
+    {"name": "CLUSTER_PING_TIMEOUT", "label": "Cluster Ping Timeout", "section": "cluster", "help": "Timeout für Peer-Healthcheck."},
+    {"name": "CLUSTER_STATUS_TTL_SECONDS", "label": "Cluster Status TTL", "section": "cluster", "help": "Cache-Dauer für Leader-Berechnung."},
+    {"name": "CLUSTER_SHARED_TOKEN", "label": "Cluster Shared Token", "section": "security", "help": "Token für Cluster-Endpunkte.", "secret": "true"},
+    {"name": "REQUEST_TIMEOUT", "label": "HTTP Request Timeout", "section": "runtime", "help": "Timeout für externe HTTP-Requests."},
+    {"name": "VERIFY_TLS", "label": "TLS prüfen", "section": "security", "help": "true/false"},
+    {"name": "LOG_LEVEL", "label": "Log-Level", "section": "runtime", "help": "z. B. DEBUG, INFO, WARNING."},
+    {"name": "DEBUG_DIVERA", "label": "DiVeRa Debug aktiv", "section": "runtime", "help": "true/false"},
+    {"name": "AUDIT_LOG_FILE", "label": "Audit-Log Datei", "section": "runtime", "help": "Optionaler Pfad für Audit-Einträge."},
+    {"name": "UPDATE_COMMAND", "label": "Update-Kommando", "section": "general", "help": "Wird vom Update-Button ausgeführt."},
+    {"name": "UPDATE_CHECK_COMMAND", "label": "Update-Check Kommando", "section": "general", "help": "Exitcode 0=Update verfügbar, 1=kein Update."},
+    {"name": "DEDUP_RETENTION_HOURS", "label": "Dedup-Retention (Stunden)", "section": "runtime", "help": "Aufbewahrungsdauer für Deduplizierung."},
+]
+
+
 def configure_logging() -> None:
     level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
@@ -152,6 +212,7 @@ CLUSTER_SHARED_TOKEN = env("CLUSTER_SHARED_TOKEN", "")
 
 AUDIT_LOG_FILE = env("AUDIT_LOG_FILE", "")
 UPDATE_COMMAND = env("UPDATE_COMMAND", "")
+UPDATE_CHECK_COMMAND = env("UPDATE_CHECK_COMMAND", "")
 DEDUP_RETENTION_HOURS = float(env("DEDUP_RETENTION_HOURS", "48"))
 
 STATE_LOCK = threading.RLock()  # reentrant: some locked paths update metrics
@@ -1053,6 +1114,22 @@ def _is_secret_name(name: str) -> bool:
     return any(token in upper for token in ["TOKEN", "SECRET", "PASSWORD", "ACCESSKEY"])
 
 
+def _field_definition(name: str) -> Dict[str, str]:
+    for field in WEB_CONFIG_FIELDS:
+        if field.get("name") == name:
+            return field
+    return {}
+
+
+def _group_env_definitions() -> Dict[str, List[Dict[str, Any]]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {section: [] for section, _ in WEB_CONFIG_SECTIONS}
+    for item in sorted(ENV_DEFINITIONS, key=lambda x: str(x.get("name", ""))):
+        name = str(item.get("name", ""))
+        section = _field_definition(name).get("section", "runtime")
+        grouped.setdefault(section, []).append(item)
+    return grouped
+
+
 def _current_env_value(name: str, default: Optional[str]) -> str:
     if name in os.environ:
         return str(os.environ.get(name, ""))
@@ -1061,28 +1138,88 @@ def _current_env_value(name: str, default: Optional[str]) -> str:
     return str(default)
 
 
+def _render_config_input(name: str, value: str) -> str:
+    field = _field_definition(name)
+    input_type = "password" if field.get("secret") == "true" or _is_secret_name(name) else "text"
+    if len(value) > 120:
+        return f'<textarea name="cfg_{_html_escape(name)}" rows="3" style="width:100%;padding:0.55rem;border:1px solid #d0d7de;border-radius:0.45rem;">{_html_escape(value)}</textarea>'
+    return f'<input id="cfg_{_html_escape(name)}" name="cfg_{_html_escape(name)}" type="{input_type}" value="{_html_escape(value)}" style="width:100%;padding:0.55rem;border:1px solid #d0d7de;border-radius:0.45rem;"/>'
+
+
+def get_update_availability() -> Tuple[str, str]:
+    if not UPDATE_CHECK_COMMAND.strip():
+        return "unknown", "Kein Update-Check konfiguriert"
+
+    try:
+        result = subprocess.run(
+            shlex.split(UPDATE_CHECK_COMMAND),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except Exception as exc:
+        return "unknown", f"Update-Check fehlgeschlagen: {exc}"
+
+    output = (result.stdout or result.stderr or "").strip()
+    if result.returncode == 0:
+        return "available", output or "Update verfügbar"
+    if result.returncode == 1:
+        return "up-to-date", output or "Kein Update verfügbar"
+    return "unknown", output or f"Unbekannter Exitcode: {result.returncode}"
+
+
 def render_config_page(message: str = "", error: bool = False, auth_token: str = "") -> str:
     status_html = ""
     if message:
         color = "#b00020" if error else "#0a7f2e"
-        status_html = f'<p style="color:{color};font-weight:600;">{_html_escape(message)}</p>'
+        status_html = f'<div style="border-left:4px solid {color};background:#fff;padding:0.8rem 1rem;margin-bottom:1rem;color:{color};font-weight:600;">{_html_escape(message)}</div>'
 
-    rows: List[str] = []
-    for item in sorted(ENV_DEFINITIONS, key=lambda x: str(x.get("name", ""))):
-        name = str(item.get("name", ""))
-        default = item.get("default")
-        value = _current_env_value(name, default)
-        input_type = "password" if _is_secret_name(name) else "text"
-        rows.append(
-            "<tr>"
-            f"<td><code>{_html_escape(name)}</code></td>"
-            f"<td><input name=\"cfg_{_html_escape(name)}\" type=\"{input_type}\" value=\"{_html_escape(value)}\" style=\"width:100%;padding:0.4rem;\"/></td>"
-            f"<td><small>{_html_escape(str(default) if default is not None else '')}</small></td>"
-            "</tr>"
+    grouped = _group_env_definitions()
+    section_blocks: List[str] = []
+    for section_key, section_label in WEB_CONFIG_SECTIONS:
+        items = grouped.get(section_key, [])
+        if not items:
+            continue
+
+        rows: List[str] = []
+        for item in items:
+            name = str(item.get("name", ""))
+            default = item.get("default")
+            value = _current_env_value(name, default)
+            field = _field_definition(name)
+            label = field.get("label", name)
+            help_text = field.get("help", "")
+            rows.append(
+                '<div class="cfg-row" '
+                f'data-name="{_html_escape(name.casefold())}" '
+                f'data-label="{_html_escape(label.casefold())}" '
+                f'data-help="{_html_escape(help_text.casefold())}">'
+                f'<div><label for="cfg_{_html_escape(name)}" style="font-weight:600;display:block;">{_html_escape(label)}</label>'
+                f'<code style="font-size:0.85rem;color:#57606a;">{_html_escape(name)}</code>'
+                f'<div style="margin-top:0.35rem;color:#57606a;font-size:0.9rem;">{_html_escape(help_text)}</div></div>'
+                f'<div>{_render_config_input(name, value)}</div>'
+                f'<div style="color:#57606a;font-size:0.88rem;">{_html_escape(str(default) if default is not None else "")}</div>'
+                '</div>'
+            )
+
+        section_blocks.append(
+            '<section style="margin:1.25rem 0;padding:1rem;border:1px solid #d0d7de;border-radius:0.65rem;background:#fff;">'
+            f'<h2 style="margin:0 0 0.75rem 0;font-size:1.1rem;">{_html_escape(section_label)}</h2>'
+            f"{''.join(rows)}"
+            '</section>'
         )
 
     config_action = _path_with_token(WEBHOOK_CONFIG_PATH, auth_token)
     update_action = _path_with_token(WEBHOOK_UPDATE_PATH, auth_token)
+    update_state, update_hint = get_update_availability()
+    update_state_colors = {
+        "available": "#d1242f",
+        "up-to-date": "#1a7f37",
+        "unknown": "#9a6700",
+    }
+    update_color = update_state_colors.get(update_state, "#9a6700")
 
     return f"""<!doctype html>
 <html lang="de">
@@ -1090,22 +1227,60 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Alarm Gateway Konfiguration</title>
+  <style>
+    body {{ font-family: Inter, Arial, sans-serif; background: #f6f8fa; color: #24292f; margin: 0; }}
+    .container {{ max-width: 1180px; margin: 1.2rem auto; padding: 0 1rem 2rem; }}
+    .topbar {{ display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; justify-content:space-between; }}
+    .cfg-row {{ display:grid; grid-template-columns: minmax(280px, 2fr) minmax(260px, 3fr) minmax(180px, 2fr); gap:0.9rem; align-items:start; margin-bottom:0.95rem; }}
+    .actions {{ display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin:1rem 0; }}
+    .btn {{ background:#1f6feb; color:white; border:none; border-radius:0.45rem; padding:0.65rem 1rem; cursor:pointer; font-weight:600; }}
+    .btn.secondary {{ background:#57606a; }}
+    .search {{ width:min(480px, 100%); padding:0.6rem 0.75rem; border:1px solid #d0d7de; border-radius:0.45rem; }}
+    @media (max-width: 960px) {{ .cfg-row {{ grid-template-columns: 1fr; }} }}
+  </style>
 </head>
-<body style="font-family:Arial,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;">
-  <h1>Konfiguration</h1>
-  <p>Diese Seite zeigt alle bekannten Umgebungsvariablen. Neue Variablen aus Updates erscheinen automatisch.</p>
-  {status_html}
-  <form method="post" action="{_html_escape(config_action)}" style="margin-bottom:1.5rem;">
-    <table style="width:100%;border-collapse:collapse;">
-      <thead><tr><th style="text-align:left;">Variable</th><th style="text-align:left;">Wert</th><th style="text-align:left;">Default</th></tr></thead>
-      <tbody>{''.join(rows)}</tbody>
-    </table>
-    <p><button type="submit" style="padding:0.6rem 1rem;">Konfiguration speichern</button></p>
-  </form>
-  <form method="post" action="{_html_escape(update_action)}">
-    <button type="submit" style="padding:0.6rem 1rem;">Update starten</button>
-    <small>Command: <code>{_html_escape(UPDATE_COMMAND or 'nicht konfiguriert')}</code></small>
-  </form>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div>
+        <h1 style="margin:0;">Alarm Gateway Konfiguration</h1>
+        <p style="margin:0.45rem 0 0 0;color:#57606a;">Neu aufgebautes Admin-Interface mit Gruppen, Suche und klaren Beschreibungen.</p>
+      </div>
+      <a href="{_html_escape(WEBHOOK_UI_PATH)}" style="text-decoration:none;color:#1f6feb;font-weight:600;">Zum Alarm-Formular</a>
+    </div>
+    {status_html}
+    <form method="post" action="{_html_escape(config_action)}">
+      <div class="actions">
+        <input id="cfg-search" class="search" type="search" placeholder="Variable suchen (Name, Label, Beschreibung)…"/>
+        <button type="submit" class="btn">Konfiguration speichern</button>
+      </div>
+      {''.join(section_blocks)}
+    </form>
+    <section style="margin:1.25rem 0;padding:1rem;border:1px solid #d0d7de;border-radius:0.65rem;background:#fff;">
+      <h2 style="margin:0 0 0.75rem 0;font-size:1.1rem;">Update</h2>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.75rem;margin-bottom:0.75rem;">
+        <span style="display:inline-block;border:1px solid {update_color};color:{update_color};border-radius:999px;padding:0.22rem 0.65rem;font-size:0.85rem;font-weight:600;">{_html_escape(update_state)}</span>
+        <span style="color:#57606a;">{_html_escape(update_hint)}</span>
+      </div>
+      <form method="post" action="{_html_escape(update_action)}">
+        <button type="submit" class="btn secondary">Update starten</button>
+        <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(UPDATE_COMMAND or 'nicht konfiguriert')}</code></small>
+      </form>
+    </section>
+  </div>
+  <script>
+    (function () {{
+      const input = document.getElementById('cfg-search');
+      if (!input) return;
+      input.addEventListener('input', function () {{
+        const needle = input.value.trim().toLowerCase();
+        document.querySelectorAll('.cfg-row').forEach(function (row) {{
+          const haystack = [row.dataset.name, row.dataset.label, row.dataset.help].join(' ');
+          row.style.display = (!needle || haystack.includes(needle)) ? 'grid' : 'none';
+        }});
+      }});
+    }})();
+  </script>
 </body>
 </html>
 """
