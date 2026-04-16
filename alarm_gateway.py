@@ -241,6 +241,11 @@ UPDATE_STATUS: Dict[str, str] = {
 }
 
 
+def get_update_command() -> str:
+    configured = os.environ.get("UPDATE_COMMAND", UPDATE_COMMAND)
+    return str(configured or "").strip()
+
+
 def debug_log(message: str) -> None:
     if DEBUG_DIVERA:
         LOGGER.debug(message)
@@ -1325,6 +1330,8 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
     }
     update_color = update_state_colors.get(update_state, "#9a6700")
 
+    update_command = get_update_command()
+
     return f"""<!doctype html>
 <html lang="de">
 <head>
@@ -1369,7 +1376,7 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
       <div style="color:#57606a;font-size:0.9rem;margin-bottom:0.75rem;">Letzter Check: {_html_escape(update_checked_at or 'noch nicht erfolgt')}</div>
       <form method="post" action="{_html_escape(update_action)}">
         <button type="submit" class="btn secondary">Update starten</button>
-        <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(UPDATE_COMMAND or 'nicht konfiguriert')}</code></small>
+        <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(update_command or 'nicht konfiguriert')}</code></small>
       </form>
     </section>
   </div>
@@ -1415,9 +1422,10 @@ def save_config_to_env_file(values: Dict[str, str]) -> None:
 
 
 def start_update_command() -> None:
-    if not UPDATE_COMMAND.strip():
+    update_command = get_update_command()
+    if not update_command:
         raise RuntimeError("UPDATE_COMMAND ist nicht gesetzt")
-    subprocess.Popen(shlex.split(UPDATE_COMMAND), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(shlex.split(update_command), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     refresh_update_status()
 
 
