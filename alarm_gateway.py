@@ -39,9 +39,7 @@ WEB_CONFIG_SECTIONS: List[Tuple[str, str]] = [
     ("general", "Allgemein"),
     ("divera", "DiVeRa API"),
     ("ntfy", "ntfy Push"),
-    ("web", "Webhook & Web"),
     ("cluster", "Cluster"),
-    ("runtime", "Laufzeit & Logging"),
     ("security", "Sicherheit"),
 ]
 
@@ -50,51 +48,23 @@ WEB_CONFIG_FIELDS: List[Dict[str, str]] = [
     {"name": "DIVERA_URL", "label": "DiVeRa URL", "section": "divera", "help": "Primäre API-URL für Alarme."},
     {"name": "DIVERA_FALLBACK_URL", "label": "DiVeRa Fallback URL", "section": "divera", "help": "Alternative URL falls die primäre URL ausfällt."},
     {"name": "DIVERA_ACCESSKEY", "label": "DiVeRa Access Key", "section": "security", "help": "API-Schlüssel für DiVeRa.", "secret": "true"},
-    {"name": "POLL_SECONDS", "label": "Poll-Intervall (Sekunden)", "section": "general", "help": "Wie oft DiVeRa abgefragt wird."},
-    {"name": "STATE_FILE", "label": "State-Datei", "section": "runtime", "help": "Datei für deduplizierte Alarm-Zustände."},
+    {"name": "ACTIVE_POLL_SECONDS", "label": "Aktiv-Polling (Sekunden)", "section": "general", "help": "Abfrageintervall für die aktive Node."},
+    {"name": "STANDBY_POLL_SECONDS", "label": "Standby-Polling (Sekunden)", "section": "general", "help": "Abfrageintervall für Standby-Nodes."},
     {"name": "NTFY_URL", "label": "ntfy URL", "section": "ntfy", "help": "Basis-URL des ntfy Servers."},
     {"name": "NTFY_TOPIC", "label": "ntfy Topic", "section": "ntfy", "help": "Ziel-Topic für Push-Nachrichten."},
     {"name": "NTFY_AUTH_TOKEN", "label": "ntfy Auth-Token", "section": "security", "help": "Bearer Token für ntfy.", "secret": "true"},
     {"name": "NTFY_DEFAULT_PRIORITY", "label": "Standard-Priorität", "section": "ntfy", "help": "Fallback-Priorität (1-5)."},
     {"name": "NTFY_PRIORITY_KEYWORDS", "label": "Prioritäts-Keywords", "section": "ntfy", "help": "Format: keyword=prio,keyword=prio."},
-    {"name": "NTFY_FALLBACK_URLS", "label": "ntfy Fallback URLs", "section": "ntfy", "help": "Kommagetrennte Liste alternativer ntfy URLs."},
-    {"name": "NTFY_RETRY_ATTEMPTS", "label": "Retry-Versuche", "section": "ntfy", "help": "Wie oft ntfy-Senden wiederholt wird."},
-    {"name": "NTFY_RETRY_DELAY_SECONDS", "label": "Retry-Delay", "section": "ntfy", "help": "Wartezeit zwischen Retries in Sekunden."},
-    {"name": "NTFY_RETRY_JITTER_SECONDS", "label": "Retry-Jitter", "section": "ntfy", "help": "Zusätzlicher zufälliger Delay in Sekunden."},
-    {"name": "WEBHOOK_ENABLED", "label": "Webhook aktiv", "section": "web", "help": "true/false"},
-    {"name": "WEBHOOK_BIND", "label": "Webhook Bind-Adresse", "section": "web", "help": "Adresse für HTTP-Server Bind."},
-    {"name": "WEBHOOK_PORT", "label": "Webhook Port", "section": "web", "help": "Port für Webhook/Weboberfläche."},
-    {"name": "WEBHOOK_PATH", "label": "Webhook POST-Pfad", "section": "web", "help": "Pfad für eingehende Webhooks."},
-    {"name": "WEBHOOK_UI_PATH", "label": "Webformular-Pfad", "section": "web", "help": "Pfad für das manuelle Alarm-Formular."},
-    {"name": "WEBHOOK_TRIGGER_PATH", "label": "GET-Trigger-Pfad", "section": "web", "help": "Pfad für einfachen GET-Trigger."},
-    {"name": "WEBHOOK_CONFIG_PATH", "label": "Konfigurations-Pfad", "section": "web", "help": "Pfad der Admin-Konfigurationsseite."},
-    {"name": "WEBHOOK_UPDATE_PATH", "label": "Update-Pfad", "section": "web", "help": "Pfad für Update-Trigger im Webinterface."},
+    {"name": "WEBHOOK_ENABLED", "label": "Webhook aktiv", "section": "general", "help": "true/false"},
     {"name": "WEBHOOK_TOKEN", "label": "Webhook Token", "section": "security", "help": "Bearer oder query token=...", "secret": "true"},
-    {"name": "WEBHOOK_REPLAY_PROTECTION", "label": "Replay-Schutz aktiv", "section": "security", "help": "true/false"},
-    {"name": "WEBHOOK_MAX_SKEW_SECONDS", "label": "Max. Replay-Skew", "section": "security", "help": "Max. erlaubte Zeitabweichung in Sekunden."},
-    {"name": "WEBHOOK_HMAC_SECRET", "label": "Webhook HMAC Secret", "section": "security", "help": "Secret für Replay-Signaturen.", "secret": "true"},
-    {"name": "HEALTH_ENABLED", "label": "Health-Endpoint aktiv", "section": "web", "help": "true/false"},
-    {"name": "HEALTH_BIND", "label": "Health Bind-Adresse", "section": "web", "help": "Adresse für Health HTTP Server."},
-    {"name": "HEALTH_PORT", "label": "Health Port", "section": "web", "help": "Port für /healthz und /metrics."},
-    {"name": "HEALTH_PATH", "label": "Health-Pfad", "section": "web", "help": "Pfad für Healthcheck."},
-    {"name": "HEALTH_METRICS_PATH", "label": "Metrics-Pfad", "section": "web", "help": "Pfad für Prometheus-Metriken."},
     {"name": "NODE_ID", "label": "Node ID", "section": "cluster", "help": "Name dieser Instanz im Cluster."},
     {"name": "NODE_PRIORITY", "label": "Node Priorität", "section": "cluster", "help": "Höhere Zahl bevorzugt Leader-Rolle."},
     {"name": "PEER_NODES", "label": "Peer Nodes", "section": "cluster", "help": "Kommagetrennte Liste anderer Nodes."},
-    {"name": "CLUSTER_PING_TIMEOUT", "label": "Cluster Ping Timeout", "section": "cluster", "help": "Timeout für Peer-Healthcheck."},
-    {"name": "CLUSTER_STATUS_TTL_SECONDS", "label": "Cluster Status TTL", "section": "cluster", "help": "Cache-Dauer für Leader-Berechnung."},
     {"name": "CLUSTER_SHARED_TOKEN", "label": "Cluster Shared Token", "section": "security", "help": "Token für Cluster-Endpunkte.", "secret": "true"},
-    {"name": "REQUEST_TIMEOUT", "label": "HTTP Request Timeout", "section": "runtime", "help": "Timeout für externe HTTP-Requests."},
-    {"name": "VERIFY_TLS", "label": "TLS prüfen", "section": "security", "help": "true/false"},
-    {"name": "LOG_LEVEL", "label": "Log-Level", "section": "runtime", "help": "z. B. DEBUG, INFO, WARNING."},
-    {"name": "DEBUG_DIVERA", "label": "DiVeRa Debug aktiv", "section": "runtime", "help": "true/false"},
-    {"name": "AUDIT_LOG_FILE", "label": "Audit-Log Datei", "section": "runtime", "help": "Optionaler Pfad für Audit-Einträge."},
     {"name": "UPDATE_COMMAND", "label": "Update-Kommando", "section": "general", "help": "Wird vom Update-Button ausgeführt."},
-    {"name": "UPDATE_REPO", "label": "GitHub Repository", "section": "general", "help": "Format: owner/repo (z. B. OpenAI/gpt-oss)."},
-    {"name": "UPDATE_BRANCH", "label": "Update-Branch", "section": "general", "help": "GitHub Branch für Update-Prüfung."},
-    {"name": "UPDATE_CHECK_INTERVAL_SECONDS", "label": "Update-Check Intervall", "section": "general", "help": "Automatische Prüfung alle X Sekunden."},
-    {"name": "DEDUP_RETENTION_HOURS", "label": "Dedup-Retention (Stunden)", "section": "runtime", "help": "Aufbewahrungsdauer für Deduplizierung."},
 ]
+
+WEB_CONFIG_ALLOWED_NAMES: Set[str] = {field["name"] for field in WEB_CONFIG_FIELDS}
 
 
 def configure_logging() -> None:
@@ -167,7 +137,9 @@ DIVERA_FALLBACK_URL = env("DIVERA_FALLBACK_URL", DIVERA_FALLBACK_URL_DEFAULT)
 _raw_divera_accesskey = env("DIVERA_ACCESSKEY", "")
 DIVERA_ACCESSKEY = "" if _is_placeholder_secret(_raw_divera_accesskey, DIVERA_ACCESSKEY_PLACEHOLDER) else _raw_divera_accesskey
 
-POLL_SECONDS = int(env("POLL_SECONDS", env("POLL_INTERVAL_SECONDS", "20")))
+ACTIVE_POLL_SECONDS = int(env("ACTIVE_POLL_SECONDS", env("POLL_SECONDS", env("POLL_INTERVAL_SECONDS", "20"))))
+STANDBY_POLL_SECONDS = int(env("STANDBY_POLL_SECONDS", "120"))
+POLL_SECONDS = ACTIVE_POLL_SECONDS
 STATE_FILE = env("STATE_FILE", "/var/lib/alarm-gateway/state.json")
 
 NTFY_URL = env("NTFY_URL", "").rstrip("/")
@@ -450,6 +422,12 @@ def validate_runtime_config() -> None:
 
     if NTFY_RETRY_JITTER_SECONDS < 0:
         raise SystemExit("NTFY_RETRY_JITTER_SECONDS must be >= 0")
+
+    if ACTIVE_POLL_SECONDS < 1:
+        raise SystemExit("ACTIVE_POLL_SECONDS must be >= 1")
+
+    if STANDBY_POLL_SECONDS < 1:
+        raise SystemExit("STANDBY_POLL_SECONDS must be >= 1")
 
     if NTFY_URL and not _looks_like_https(NTFY_URL):
         warnings.add("NTFY_URL is not https")
@@ -1153,7 +1131,9 @@ def _group_env_definitions() -> Dict[str, List[Dict[str, Any]]]:
     grouped: Dict[str, List[Dict[str, Any]]] = {section: [] for section, _ in WEB_CONFIG_SECTIONS}
     for item in sorted(ENV_DEFINITIONS, key=lambda x: str(x.get("name", ""))):
         name = str(item.get("name", ""))
-        section = _field_definition(name).get("section", "runtime")
+        if name not in WEB_CONFIG_ALLOWED_NAMES:
+            continue
+        section = _field_definition(name).get("section", "general")
         grouped.setdefault(section, []).append(item)
     return grouped
 
@@ -1347,7 +1327,6 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
     .actions {{ display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin:1rem 0; }}
     .btn {{ background:#1f6feb; color:white; border:none; border-radius:0.45rem; padding:0.65rem 1rem; cursor:pointer; font-weight:600; }}
     .btn.secondary {{ background:#57606a; }}
-    .search {{ width:min(480px, 100%); padding:0.6rem 0.75rem; border:1px solid #d0d7de; border-radius:0.45rem; }}
     @media (max-width: 960px) {{ .cfg-row {{ grid-template-columns: 1fr; }} }}
   </style>
 </head>
@@ -1356,14 +1335,14 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
     <div class="topbar">
       <div>
         <h1 style="margin:0;">Alarm Gateway Konfiguration</h1>
-        <p style="margin:0.45rem 0 0 0;color:#57606a;">Neu aufgebautes Admin-Interface mit Gruppen, Suche und klaren Beschreibungen.</p>
+        <p style="margin:0.45rem 0 0 0;color:#57606a;">Reduzierte, betriebskritische Einstellungen.</p>
       </div>
       <a href="{_html_escape(WEBHOOK_UI_PATH)}" style="text-decoration:none;color:#1f6feb;font-weight:600;">Zum Alarm-Formular</a>
     </div>
     {status_html}
     <form method="post" action="{_html_escape(config_action)}">
       <div class="actions">
-        <input id="cfg-search" class="search" type="search" placeholder="Variable suchen (Name, Label, Beschreibung)…"/>
+        <input id="cfg-search" type="search" placeholder="Suche deaktiviert (Hardening)" style="display:none;" readonly/>
         <button type="submit" class="btn">Konfiguration speichern</button>
       </div>
       {''.join(section_blocks)}
@@ -1381,19 +1360,6 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
       </form>
     </section>
   </div>
-  <script>
-    (function () {{
-      const input = document.getElementById('cfg-search');
-      if (!input) return;
-      input.addEventListener('input', function () {{
-        const needle = input.value.trim().toLowerCase();
-        document.querySelectorAll('.cfg-row').forEach(function (row) {{
-          const haystack = [row.dataset.name, row.dataset.label, row.dataset.help].join(' ');
-          row.style.display = (!needle || haystack.includes(needle)) ? 'grid' : 'none';
-        }});
-      }});
-    }})();
-  </script>
 </body>
 </html>
 """
@@ -1408,6 +1374,8 @@ def save_config_to_env_file(values: Dict[str, str]) -> None:
     ]
     for item in sorted(ENV_DEFINITIONS, key=lambda x: str(x.get("name", ""))):
         name = str(item.get("name", ""))
+        if name not in WEB_CONFIG_ALLOWED_NAMES:
+            continue
         val = values.get(name, _current_env_value(name, item.get("default")))
         escaped = val.replace("\\", "\\\\").replace('"', '\\"')
         lines.append(f'{name}="{escaped}"')
@@ -1599,7 +1567,9 @@ def make_webhook_handler(state: Dict[str, Any]):
                     values: Dict[str, str] = {}
                     for key, value in payload.items():
                         if key.startswith("cfg_"):
-                            values[key[len("cfg_"):]] = str(value)
+                            env_name = key[len("cfg_"):]
+                            if env_name in WEB_CONFIG_ALLOWED_NAMES:
+                                values[env_name] = str(value)
                     save_config_to_env_file(values)
                     self._send_html(
                         200,
@@ -1733,13 +1703,15 @@ def start_webhook_server(state: Dict[str, Any]) -> Optional[ThreadingHTTPServer]
     return server
 
 
-def handle_divera_poll(state: Dict[str, Any]) -> None:
-    cluster = resolve_cluster_status(force_refresh=True)
-    if str(cluster.get("leader_id", "")) != NODE_ID:
+def handle_divera_poll(state: Dict[str, Any], active_sender: Optional[bool] = None) -> None:
+    if active_sender is None:
+        cluster = resolve_cluster_status(force_refresh=True)
+        active_sender = str(cluster.get("leader_id", "")) == NODE_ID
+
+    if not active_sender:
+        fetch_alarms()
         metric_inc("cluster_standby_skip")
-        debug_log(
-            f"Standby mode: leader={cluster.get('leader_id')} prio={cluster.get('leader_priority')}"
-        )
+        debug_log("Standby mode: only DiVeRa heartbeat poll executed")
         return
 
     data = fetch_alarms()
@@ -1815,9 +1787,11 @@ def main() -> None:
         try:
             mono_now = time.monotonic()
             if DIVERA_ACCESSKEY and mono_now >= next_divera:
-                handle_divera_poll(state)
+                cluster = resolve_cluster_status(force_refresh=True)
+                active_sender = str(cluster.get("leader_id", "")) == NODE_ID
+                handle_divera_poll(state, active_sender=active_sender)
                 metric_inc("divera_poll_ok")
-                next_divera = mono_now + POLL_SECONDS
+                next_divera = mono_now + (ACTIVE_POLL_SECONDS if active_sender else STANDBY_POLL_SECONDS)
 
             if is_active_sender():
                 flush_pending_notifications(state)
