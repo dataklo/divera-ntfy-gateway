@@ -1518,6 +1518,22 @@ def _is_cluster_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
     return header_token == CLUSTER_SHARED_TOKEN or query_token == CLUSTER_SHARED_TOKEN
 
 
+def _resolved_auth_token(headers: Any, query_params: Dict[str, str]) -> str:
+    """Resolve a valid webhook token from query/header to keep admin actions authenticated."""
+    if not WEBHOOK_TOKEN:
+        return ""
+
+    query_token = str(query_params.get("token", "")).strip()
+    if query_token == WEBHOOK_TOKEN:
+        return WEBHOOK_TOKEN
+
+    auth_header = str(headers.get("Authorization", "")).strip()
+    if auth_header == f"Bearer {WEBHOOK_TOKEN}":
+        return WEBHOOK_TOKEN
+
+    return ""
+
+
 def make_webhook_handler(state: Dict[str, Any]):
     class WebhookHandler(BaseHTTPRequestHandler):
         def _send_json(self, code: int, payload: Dict[str, Any]) -> None:
@@ -1537,10 +1553,7 @@ def make_webhook_handler(state: Dict[str, Any]):
             self.wfile.write(encoded)
 
         def _authorized_token_from_query(self, query_params: Dict[str, str]) -> str:
-            candidate = str(query_params.get("token", "")).strip()
-            if WEBHOOK_TOKEN and candidate == WEBHOOK_TOKEN:
-                return candidate
-            return ""
+            return _resolved_auth_token(self.headers, query_params)
 
         def do_GET(self) -> None:  # noqa: N802
             request_path, query_params = parse_query_params(self.path)
