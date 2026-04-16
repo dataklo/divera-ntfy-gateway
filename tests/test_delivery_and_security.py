@@ -195,43 +195,44 @@ class DeliveryAndSecurityTests(unittest.TestCase):
     def test_path_matches_rejects_different_path(self):
         self.assertFalse(self.module.path_matches('/admin/configuration', '/admin/config'))
 
-    def test_get_update_availability_reports_missing_check_command(self):
-        old_cmd = self.module.UPDATE_CHECK_COMMAND
+    def test_get_update_availability_reads_cached_state(self):
+        old_status = dict(self.module.UPDATE_STATUS)
+        old_lock = self.module.UPDATE_STATUS_LOCK
         try:
-            self.module.UPDATE_CHECK_COMMAND = ''
+            with old_lock:
+                self.module.UPDATE_STATUS.update(
+                    {"state": "unknown", "hint": "Noch kein automatischer Update-Check durchgeführt"}
+                )
             state, hint = self.module.get_update_availability()
         finally:
-            self.module.UPDATE_CHECK_COMMAND = old_cmd
+            with old_lock:
+                self.module.UPDATE_STATUS.clear()
+                self.module.UPDATE_STATUS.update(old_status)
 
         self.assertEqual(state, 'unknown')
-        self.assertEqual(hint, 'Kein Update-Check konfiguriert')
+        self.assertEqual(hint, 'Noch kein automatischer Update-Check durchgeführt')
 
-    def test_get_update_availability_uses_exit_code_mapping(self):
-        old_cmd = self.module.UPDATE_CHECK_COMMAND
-        old_run = self.module.subprocess.run
-
-        class Result:
-            def __init__(self, returncode, stdout='', stderr=''):
-                self.returncode = returncode
-                self.stdout = stdout
-                self.stderr = stderr
+    def test_refresh_update_status_maps_version_state(self):
+        old_fetch = self.module._fetch_latest_github_sha
+        old_read = self.module._read_current_version
 
         try:
-            self.module.UPDATE_CHECK_COMMAND = 'dummy-check'
-            self.module.subprocess.run = lambda *_args, **_kwargs: Result(0, stdout='2 commits behind')
+            self.module._read_current_version = lambda: 'abc1234'
+            self.module._fetch_latest_github_sha = lambda: 'def5678'
+            self.module.refresh_update_status()
             state, hint = self.module.get_update_availability()
-            self.assertEqual((state, hint), ('available', '2 commits behind'))
+            self.assertEqual(state, 'available')
+            self.assertIn('abc1234', hint)
+            self.assertIn('def5678', hint)
 
-            self.module.subprocess.run = lambda *_args, **_kwargs: Result(1, stdout='up to date')
+            self.module._read_current_version = lambda: 'def5678'
+            self.module._fetch_latest_github_sha = lambda: 'def5678'
+            self.module.refresh_update_status()
             state, hint = self.module.get_update_availability()
-            self.assertEqual((state, hint), ('up-to-date', 'up to date'))
-
-            self.module.subprocess.run = lambda *_args, **_kwargs: Result(5, stderr='failed')
-            state, hint = self.module.get_update_availability()
-            self.assertEqual((state, hint), ('unknown', 'failed'))
+            self.assertEqual(state, 'up-to-date')
         finally:
-            self.module.UPDATE_CHECK_COMMAND = old_cmd
-            self.module.subprocess.run = old_run
+            self.module._fetch_latest_github_sha = old_fetch
+            self.module._read_current_version = old_read
 
     def test_render_config_page_shows_update_status(self):
         old_get_update = self.module.get_update_availability

@@ -10,7 +10,7 @@ USER_NAME="alarm-gateway"
 
 echo "[*] Installing packages..."
 apt update
-apt install -y python3 python3-venv python3-pip ca-certificates curl rsync
+apt install -y python3 python3-venv python3-pip ca-certificates curl rsync sudo
 
 echo "[*] Creating user/group..."
 if ! id -u "$USER_NAME" >/dev/null 2>&1; then
@@ -19,6 +19,8 @@ fi
 
 echo "[*] Creating directories..."
 mkdir -p "$APP_DIR" "$ENV_DIR" "$STATE_DIR"
+chown root:"$USER_NAME" "$ENV_DIR"
+chmod 0775 "$ENV_DIR"
 chown -R "$USER_NAME:$USER_NAME" "$STATE_DIR"
 
 echo "[*] Copying application files to $APP_DIR ..."
@@ -28,6 +30,11 @@ rsync -a --delete \
   --exclude "scripts" \
   --exclude "systemd" \
   "$REPO_ROOT/" "$APP_DIR/"
+
+install -d -m 0755 "$APP_DIR/scripts"
+install -m 0755 "$REPO_ROOT/scripts/update.sh" "$APP_DIR/scripts/update.sh"
+echo "$USER_NAME ALL=(root) NOPASSWD: /opt/alarm-gateway/scripts/update.sh" > /etc/sudoers.d/alarm-gateway-update
+chmod 0440 /etc/sudoers.d/alarm-gateway-update
 
 echo "[*] Creating python venv + installing requirements..."
 python3 -m venv "$APP_DIR/venv"
@@ -100,10 +107,12 @@ HEALTH_PATH="/healthz"
 HEALTH_METRICS_PATH="/metrics"
 
 # Web-Update
-UPDATE_COMMAND="sudo bash /opt/divera-ntfy-gateway/scripts/update.sh"
-UPDATE_CHECK_COMMAND="bash /opt/divera-ntfy-gateway/scripts/update.sh --check"
+UPDATE_COMMAND="sudo /opt/alarm-gateway/scripts/update.sh"
+UPDATE_REPO="procode-its/divera-ntfy-gateway"
+UPDATE_BRANCH="main"
+UPDATE_CHECK_INTERVAL_SECONDS="300"
 EOF
-  chmod 0640 "$ENV_DIR/alarm-gateway.env"
+  chmod 0660 "$ENV_DIR/alarm-gateway.env"
   chown root:"$USER_NAME" "$ENV_DIR/alarm-gateway.env"
   echo "[!] Created $ENV_DIR/alarm-gateway.env - please edit it now!"
 else
