@@ -113,6 +113,18 @@ rsync -a --delete \
 install -d -m 0755 "$APP_DIR/scripts"
 install -m 0755 "$src_dir/scripts/update.sh" "$APP_DIR/scripts/update.sh"
 
+echo "[*] Aktualisiere sudoers-Regeln für Admin-Aktionen ..."
+cat > /etc/sudoers.d/alarm-gateway-update <<'EOF'
+alarm-gateway ALL=(root) NOPASSWD: /opt/alarm-gateway/scripts/update.sh
+EOF
+chmod 0440 /etc/sudoers.d/alarm-gateway-update
+cat > /etc/sudoers.d/alarm-gateway-admin <<'EOF'
+alarm-gateway ALL=(root) NOPASSWD: /usr/bin/systemctl restart alarm-gateway
+alarm-gateway ALL=(root) NOPASSWD: /usr/sbin/reboot
+alarm-gateway ALL=(root) NOPASSWD: /sbin/reboot
+EOF
+chmod 0440 /etc/sudoers.d/alarm-gateway-admin
+
 if id -u alarm-gateway >/dev/null 2>&1; then
   install -d -m 0775 -o root -g alarm-gateway "/etc/alarm-gateway"
   if [[ -f "$ENV_FILE_PATH" ]]; then
