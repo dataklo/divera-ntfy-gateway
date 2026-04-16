@@ -357,7 +357,7 @@ UPDATE_BRANCH="main"
 UPDATE_CHECK_INTERVAL_SECONDS="300"
 ```
 
-Wenn `UPDATE_COMMAND` gesetzt ist, kannst du das Update zusätzlich über den Button im Admin-Webinterface starten.
+Der Update-Button im Admin-Webinterface nutzt standardmäßig `sudo /opt/alarm-gateway/scripts/update.sh` und kann bei Bedarf über `UPDATE_COMMAND` angepasst werden.
 
 ### Deinstallation (alles wieder entfernen)
 

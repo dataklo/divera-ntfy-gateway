@@ -61,6 +61,16 @@ class ConfigValidationTests(unittest.TestCase):
                 os.environ['UPDATE_REPO'] = old_repo
         self.assertEqual(module.UPDATE_REPO, 'dataklo/divera-ntfy-gateway')
 
+    def test_default_update_command_points_to_update_script(self):
+        old_command = os.environ.pop('UPDATE_COMMAND', None)
+        try:
+            import alarm_gateway
+            module = importlib.reload(alarm_gateway)
+        finally:
+            if old_command is not None:
+                os.environ['UPDATE_COMMAND'] = old_command
+        self.assertEqual(module.get_update_command(), 'sudo /opt/alarm-gateway/scripts/update.sh')
+
 
 if __name__ == '__main__':
     unittest.main()
