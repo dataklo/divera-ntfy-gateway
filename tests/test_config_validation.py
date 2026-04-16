@@ -45,6 +45,22 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             module.validate_runtime_config()
 
+    def test_validate_runtime_config_accepts_low_update_interval(self):
+        os.environ['UPDATE_CHECK_INTERVAL_SECONDS'] = '30'
+        import alarm_gateway
+        module = importlib.reload(alarm_gateway)
+        module.validate_runtime_config()
+
+    def test_default_update_repo_matches_project_repository(self):
+        old_repo = os.environ.pop('UPDATE_REPO', None)
+        try:
+            import alarm_gateway
+            module = importlib.reload(alarm_gateway)
+        finally:
+            if old_repo is not None:
+                os.environ['UPDATE_REPO'] = old_repo
+        self.assertEqual(module.UPDATE_REPO, 'dataklo/divera-ntfy-gateway')
+
 
 if __name__ == '__main__':
     unittest.main()
