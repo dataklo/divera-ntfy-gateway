@@ -1503,9 +1503,7 @@ def _is_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
 
 
 def _is_admin_action_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
-    """Sensitive admin actions always require an explicitly configured token."""
-    if not WEBHOOK_TOKEN:
-        return False
+    """Sensitive admin actions use the same auth model as the rest of the webhook UI."""
     return _is_authorized(headers, query_params)
 
 
@@ -1582,6 +1580,96 @@ def make_webhook_handler(state: Dict[str, Any]):
                 except Exception as exc:
                     metric_inc("webhook_error")
                     self._send_json(400, {"error": str(exc)})
+                return
+
+            if path_matches(request_path, WEBHOOK_UPDATE_PATH):
+                if not _is_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                try:
+                    start_update_command()
+                    self._send_html(
+                        200,
+                        render_config_page("Update wurde gestartet.", auth_token=self._authorized_token_from_query(query_params)),
+                    )
+                except Exception as exc:
+                    self._send_html(
+                        400,
+                        render_config_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
+                return
+
+            if path_matches(request_path, WEBHOOK_UPDATE_CHECK_PATH):
+                if not _is_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                try:
+                    refresh_update_status()
+                    self._send_html(
+                        200,
+                        render_config_page("Update-Check wurde durchgeführt.", auth_token=self._authorized_token_from_query(query_params)),
+                    )
+                except Exception as exc:
+                    self._send_html(
+                        400,
+                        render_config_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
+                return
+
+            if path_matches(request_path, WEBHOOK_RESTART_SERVICE_PATH):
+                if not _is_admin_action_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                try:
+                    start_system_command(RESTART_SERVICE_COMMAND, "Restart-Kommando ist nicht gesetzt")
+                    self._send_html(
+                        200,
+                        render_config_page(
+                            "alarm-gateway Neustart wurde ausgelöst.",
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
+                except Exception as exc:
+                    self._send_html(
+                        400,
+                        render_config_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
+                return
+
+            if path_matches(request_path, WEBHOOK_REBOOT_PATH):
+                if not _is_admin_action_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                try:
+                    start_system_command(REBOOT_COMMAND, "Reboot-Kommando ist nicht gesetzt")
+                    self._send_html(
+                        200,
+                        render_config_page(
+                            "System-Reboot wurde ausgelöst.",
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
+                except Exception as exc:
+                    self._send_html(
+                        400,
+                        render_config_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
                 return
 
             self._send_json(404, {"error": "not found"})
