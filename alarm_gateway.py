@@ -215,7 +215,7 @@ CLUSTER_SHARED_TOKEN = env("CLUSTER_SHARED_TOKEN", "")
 AUDIT_LOG_FILE = env("AUDIT_LOG_FILE", "")
 UPDATE_COMMAND = env("UPDATE_COMMAND", "")
 UPDATE_CHECK_COMMAND = env("UPDATE_CHECK_COMMAND", "")
-UPDATE_REPO = env("UPDATE_REPO", "procode-its/divera-ntfy-gateway")
+UPDATE_REPO = env("UPDATE_REPO", "dataklo/divera-ntfy-gateway")
 UPDATE_BRANCH = env("UPDATE_BRANCH", "main")
 UPDATE_CHECK_INTERVAL_SECONDS = int(env("UPDATE_CHECK_INTERVAL_SECONDS", "300"))
 DEDUP_RETENTION_HOURS = float(env("DEDUP_RETENTION_HOURS", "48"))
@@ -440,7 +440,7 @@ def validate_runtime_config() -> None:
         raise SystemExit("NTFY_RETRY_DELAY_SECONDS must be >= 0")
 
     if UPDATE_CHECK_INTERVAL_SECONDS < 60:
-        raise SystemExit("UPDATE_CHECK_INTERVAL_SECONDS must be >= 60")
+        warnings.add("UPDATE_CHECK_INTERVAL_SECONDS < 60; worker uses 60s minimum")
 
     if NTFY_RETRY_JITTER_SECONDS < 0:
         raise SystemExit("NTFY_RETRY_JITTER_SECONDS must be >= 0")
