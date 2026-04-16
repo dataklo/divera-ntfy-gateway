@@ -334,6 +334,31 @@ class DeliveryAndSecurityTests(unittest.TestCase):
     def test_render_web_form_page_persists_query_token_in_config_link(self):
         html = self.module.render_web_form_page(auth_token='abc123')
         self.assertIn('href="/admin/config?token=abc123"', html)
+        form_action = self.module._path_with_token(self.module.WEBHOOK_UI_PATH, 'abc123')
+        self.assertIn(f'action="{form_action}"', html)
+
+    def test_admin_action_authorization_requires_configured_token(self):
+        old_token = self.module.WEBHOOK_TOKEN
+        try:
+            self.module.WEBHOOK_TOKEN = ''
+            self.assertFalse(self.module._is_admin_action_authorized({}, {}))
+
+            self.module.WEBHOOK_TOKEN = 'secure-token'
+            self.assertFalse(self.module._is_admin_action_authorized({}, {}))
+            self.assertTrue(
+                self.module._is_admin_action_authorized(
+                    {'Authorization': 'Bearer secure-token'},
+                    {},
+                )
+            )
+        finally:
+            self.module.WEBHOOK_TOKEN = old_token
+
+    def test_render_config_page_places_update_buttons_inline(self):
+        html = self.module.render_config_page(auth_token='abc123')
+        self.assertIn('action="/admin/update-check?token=abc123" style="display:inline-block;"', html)
+        self.assertIn('action="/admin/update?token=abc123" style="display:inline-block;margin-left:0.5rem;"', html)
+        self.assertNotIn('Command: <code>', html)
 
 
 
