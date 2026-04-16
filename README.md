@@ -286,8 +286,10 @@ WEBHOOK_TRIGGER_PATH="/webhook/trigger"
 WEBHOOK_TOKEN="<optional-token>"
 WEBHOOK_CONFIG_PATH="/admin/config"
 WEBHOOK_UPDATE_PATH="/admin/update"
-UPDATE_COMMAND="sudo bash /opt/divera-ntfy-gateway/scripts/update.sh"
-UPDATE_CHECK_COMMAND="bash /opt/divera-ntfy-gateway/scripts/update.sh --check"
+UPDATE_COMMAND="sudo /opt/alarm-gateway/scripts/update.sh"
+UPDATE_REPO="procode-its/divera-ntfy-gateway"
+UPDATE_BRANCH="main"
+UPDATE_CHECK_INTERVAL_SECONDS="300"
 DEDUP_RETENTION_HOURS="48"
 ```
 
@@ -340,19 +342,19 @@ Dann muss der Aufruf einen Timestamp (`ts`) und eine Signatur (`sig`) enthalten
 ### Update (bestehende Installation aktualisieren)
 
 ```bash
-cd /pfad/zu/divera-ntfy-gateway
-git pull
-sudo bash scripts/update.sh
+sudo bash /opt/alarm-gateway/scripts/update.sh
 sudo systemctl status alarm-gateway
 ```
 
-Damit wird zuerst ein `git pull --ff-only` ausgeführt, anschließend der aktuelle Stand eingespielt und der Dienst neu gestartet.
+Das Script prüft GitHub (`UPDATE_REPO` + `UPDATE_BRANCH`), lädt bei Bedarf den aktuellen Stand herunter, installiert ihn und startet den Dienst neu.
 
-Für den Status im Admin-Webinterface konfigurierst du zusätzlich einen Update-Check (Exitcode `0` = Update verfügbar, `1` = kein Update):
+Für den Status im Admin-Webinterface gibt es einen automatischen Hintergrund-Check (standardmäßig alle 5 Minuten):
 
 ```env
-UPDATE_COMMAND="sudo bash /opt/divera-ntfy-gateway/scripts/update.sh"
-UPDATE_CHECK_COMMAND="bash /opt/divera-ntfy-gateway/scripts/update.sh --check"
+UPDATE_COMMAND="sudo /opt/alarm-gateway/scripts/update.sh"
+UPDATE_REPO="procode-its/divera-ntfy-gateway"
+UPDATE_BRANCH="main"
+UPDATE_CHECK_INTERVAL_SECONDS="300"
 ```
 
 Wenn `UPDATE_COMMAND` gesetzt ist, kannst du das Update zusätzlich über den Button im Admin-Webinterface starten.

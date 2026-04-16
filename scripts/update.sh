@@ -1,89 +1,109 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="/opt/alarm-gateway"
-SERVICE_FILE="/etc/systemd/system/alarm-gateway.service"
+SERVICE_NAME="alarm-gateway"
+DEFAULT_REPO="procode-its/divera-ntfy-gateway"
+DEFAULT_BRANCH="main"
 
-is_git_repo() {
-  git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1
+ENV_FILE="${ALARM_GATEWAY_ENV_FILE:-/etc/alarm-gateway/alarm-gateway.env}"
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+fi
+
+REPO="${UPDATE_REPO:-$DEFAULT_REPO}"
+BRANCH="${UPDATE_BRANCH:-$DEFAULT_BRANCH}"
+API_URL="https://api.github.com/repos/${REPO}/commits/${BRANCH}"
+ARCHIVE_URL="https://codeload.github.com/${REPO}/tar.gz/${BRANCH}"
+VERSION_FILE="$APP_DIR/VERSION"
+ENV_FILE_PATH="${ALARM_GATEWAY_ENV_FILE:-/etc/alarm-gateway/alarm-gateway.env}"
+
+fetch_latest_sha() {
+  curl -fsSL -H 'Accept: application/vnd.github+json' "$API_URL" | python3 -c "import json,sys; print(json.load(sys.stdin).get('sha',''))"
 }
 
-check_for_update() {
-  if ! is_git_repo; then
-    echo "[i] Kein Git-Repository unter $REPO_ROOT gefunden."
-    return 1
-  fi
+latest_sha="$(fetch_latest_sha)"
+if [[ -z "$latest_sha" ]]; then
+  echo "[!] Konnte keine aktuelle SHA von GitHub lesen (${REPO}@${BRANCH})."
+  exit 1
+fi
 
-  local branch upstream ahead behind
-  branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
-
-  if ! upstream="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref --symbolic-full-name "${branch}@{upstream}" 2>/dev/null)"; then
-    echo "[i] Kein Upstream für Branch '$branch' konfiguriert."
-    return 1
-  fi
-
-  git -C "$REPO_ROOT" fetch --quiet
-  read -r ahead behind < <(git -C "$REPO_ROOT" rev-list --left-right --count "${upstream}...HEAD")
-
-  if (( ahead > 0 )); then
-    echo "[i] Lokaler Branch ist $ahead Commit(s) vor $upstream."
-    return 1
-  fi
-
-  if (( behind > 0 )); then
-    echo "Update verfügbar ($behind Commit(s) hinter $upstream)."
-    return 0
-  fi
-
-  echo "Kein Update verfügbar."
-  return 1
-}
+current_sha=""
+if [[ -f "$VERSION_FILE" ]]; then
+  current_sha="$(tr -d '[:space:]' < "$VERSION_FILE")"
+fi
 
 if [[ "${1:-}" == "--check" ]]; then
-  check_for_update
-  exit $?
+  if [[ -n "$current_sha" && "$current_sha" == "$latest_sha" ]]; then
+    echo "Kein Update verfügbar (${current_sha:0:7})."
+    exit 1
+  fi
+
+  if [[ -n "$current_sha" ]]; then
+    echo "Update verfügbar (${current_sha:0:7} -> ${latest_sha:0:7})."
+  else
+    echo "Remote-Version gefunden (${latest_sha:0:7}), lokale VERSION fehlt."
+  fi
+  exit 0
 fi
 
-if is_git_repo; then
-  echo "[*] Synchronizing repository in $REPO_ROOT ..."
-  git -C "$REPO_ROOT" fetch --quiet
-  git -C "$REPO_ROOT" pull --ff-only
-else
-  echo "[i] Kein Git-Repository unter $REPO_ROOT gefunden - überspringe git pull."
+if [[ -n "$current_sha" && "$current_sha" == "$latest_sha" ]]; then
+  echo "[*] Bereits aktuell (${current_sha:0:7}), kein Update nötig."
+  exit 0
 fi
 
-echo "[*] Updating application files in $APP_DIR ..."
+tmp_dir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+
+echo "[*] Lade ${REPO}@${BRANCH} ..."
+curl -fsSL "$ARCHIVE_URL" -o "$tmp_dir/source.tar.gz"
+tar -xzf "$tmp_dir/source.tar.gz" -C "$tmp_dir"
+
+src_dir="$(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d -name '*-*' | head -n 1)"
+if [[ -z "$src_dir" ]]; then
+  echo "[!] Konnte entpacktes Quellverzeichnis nicht finden."
+  exit 1
+fi
+
+echo "[*] Synchronisiere Dateien nach $APP_DIR ..."
 rsync -a --delete \
   --exclude ".git" \
   --exclude ".github" \
   --exclude "venv" \
   --exclude "scripts" \
   --exclude "systemd" \
-  "$REPO_ROOT/" "$APP_DIR/"
+  "$src_dir/" "$APP_DIR/"
 
-echo "[*] Updating python dependencies..."
+install -d -m 0755 "$APP_DIR/scripts"
+install -m 0755 "$src_dir/scripts/update.sh" "$APP_DIR/scripts/update.sh"
+
+if id -u alarm-gateway >/dev/null 2>&1; then
+  install -d -m 0775 -o root -g alarm-gateway "/etc/alarm-gateway"
+  if [[ -f "$ENV_FILE_PATH" ]]; then
+    chown root:alarm-gateway "$ENV_FILE_PATH"
+    chmod 0660 "$ENV_FILE_PATH"
+  fi
+fi
 
 if [[ ! -x "$APP_DIR/venv/bin/pip" ]]; then
-  echo "[!] Python virtualenv missing in $APP_DIR/venv - creating it..."
+  echo "[!] Python virtualenv fehlt - wird erstellt..."
   python3 -m venv "$APP_DIR/venv"
 fi
 
+echo "[*] Aktualisiere Python-Abhängigkeiten ..."
 "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
 
-echo "[*] Updating systemd unit..."
-install -m 0644 "$REPO_ROOT/systemd/alarm-gateway.service" "$SERVICE_FILE"
+echo "[*] Aktualisiere systemd Unit ..."
+install -m 0644 "$src_dir/systemd/alarm-gateway.service" "/etc/systemd/system/alarm-gateway.service"
 
-echo "[*] Restarting service..."
+echo "$latest_sha" > "$VERSION_FILE"
+
+echo "[*] Starte Service neu ..."
 systemctl daemon-reload
-systemctl restart alarm-gateway
+systemctl restart "$SERVICE_NAME"
 
-echo "[✓] Update complete. Logs: journalctl -u alarm-gateway -f"
-
-
-echo "[*] Checking DiVeRa alarm status..."
-if "$APP_DIR/venv/bin/python" "$APP_DIR/alarm_gateway.py" --check-divera-alarm; then
-  echo "[✓] DiVeRa check: mind. ein aktiver Alarm vorhanden."
-else
-  echo "[i] DiVeRa check: kein aktiver Alarm gefunden oder API nicht erreichbar."
-fi
+echo "[✓] Update abgeschlossen: ${latest_sha:0:7}"

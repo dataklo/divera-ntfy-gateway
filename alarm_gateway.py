@@ -90,7 +90,9 @@ WEB_CONFIG_FIELDS: List[Dict[str, str]] = [
     {"name": "DEBUG_DIVERA", "label": "DiVeRa Debug aktiv", "section": "runtime", "help": "true/false"},
     {"name": "AUDIT_LOG_FILE", "label": "Audit-Log Datei", "section": "runtime", "help": "Optionaler Pfad für Audit-Einträge."},
     {"name": "UPDATE_COMMAND", "label": "Update-Kommando", "section": "general", "help": "Wird vom Update-Button ausgeführt."},
-    {"name": "UPDATE_CHECK_COMMAND", "label": "Update-Check Kommando", "section": "general", "help": "Exitcode 0=Update verfügbar, 1=kein Update."},
+    {"name": "UPDATE_REPO", "label": "GitHub Repository", "section": "general", "help": "Format: owner/repo (z. B. OpenAI/gpt-oss)."},
+    {"name": "UPDATE_BRANCH", "label": "Update-Branch", "section": "general", "help": "GitHub Branch für Update-Prüfung."},
+    {"name": "UPDATE_CHECK_INTERVAL_SECONDS", "label": "Update-Check Intervall", "section": "general", "help": "Automatische Prüfung alle X Sekunden."},
     {"name": "DEDUP_RETENTION_HOURS", "label": "Dedup-Retention (Stunden)", "section": "runtime", "help": "Aufbewahrungsdauer für Deduplizierung."},
 ]
 
@@ -213,6 +215,9 @@ CLUSTER_SHARED_TOKEN = env("CLUSTER_SHARED_TOKEN", "")
 AUDIT_LOG_FILE = env("AUDIT_LOG_FILE", "")
 UPDATE_COMMAND = env("UPDATE_COMMAND", "")
 UPDATE_CHECK_COMMAND = env("UPDATE_CHECK_COMMAND", "")
+UPDATE_REPO = env("UPDATE_REPO", "procode-its/divera-ntfy-gateway")
+UPDATE_BRANCH = env("UPDATE_BRANCH", "main")
+UPDATE_CHECK_INTERVAL_SECONDS = int(env("UPDATE_CHECK_INTERVAL_SECONDS", "300"))
 DEDUP_RETENTION_HOURS = float(env("DEDUP_RETENTION_HOURS", "48"))
 
 STATE_LOCK = threading.RLock()  # reentrant: some locked paths update metrics
@@ -224,6 +229,15 @@ RUNTIME_METRICS: Dict[str, int] = {
     "webhook_success": 0,
     "webhook_error": 0,
     "cluster_standby_skip": 0,
+}
+
+UPDATE_STATUS_LOCK = threading.RLock()
+UPDATE_STATUS: Dict[str, str] = {
+    "state": "unknown",
+    "hint": "Noch kein automatischer Update-Check durchgeführt",
+    "last_checked": "",
+    "latest_sha": "",
+    "current_sha": "",
 }
 
 
@@ -424,6 +438,9 @@ def validate_runtime_config() -> None:
 
     if NTFY_RETRY_DELAY_SECONDS < 0:
         raise SystemExit("NTFY_RETRY_DELAY_SECONDS must be >= 0")
+
+    if UPDATE_CHECK_INTERVAL_SECONDS < 60:
+        raise SystemExit("UPDATE_CHECK_INTERVAL_SECONDS must be >= 60")
 
     if NTFY_RETRY_JITTER_SECONDS < 0:
         raise SystemExit("NTFY_RETRY_JITTER_SECONDS must be >= 0")
@@ -1151,28 +1168,87 @@ def _render_config_input(name: str, value: str) -> str:
     return f'<input id="cfg_{_html_escape(name)}" name="cfg_{_html_escape(name)}" type="{input_type}" value="{_html_escape(value)}" style="width:100%;padding:0.55rem;border:1px solid #d0d7de;border-radius:0.45rem;"/>'
 
 
-def get_update_availability() -> Tuple[str, str]:
-    if not UPDATE_CHECK_COMMAND.strip():
-        return "unknown", "Kein Update-Check konfiguriert"
+def _format_timestamp(ts: float) -> str:
+    return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S UTC")
 
+
+def _read_current_version() -> str:
+    version_file = "/opt/alarm-gateway/VERSION"
+    if os.path.isfile(version_file):
+        try:
+            with open(version_file, "r", encoding="utf-8") as handle:
+                return handle.read().strip()
+        except Exception:
+            return ""
+    return ""
+
+
+def _fetch_latest_github_sha() -> str:
+    repo = UPDATE_REPO.strip()
+    branch = UPDATE_BRANCH.strip() or "main"
+    if not repo:
+        raise RuntimeError("UPDATE_REPO ist leer")
+
+    response = requests.get(
+        f"https://api.github.com/repos/{repo}/commits/{branch}",
+        headers={"Accept": "application/vnd.github+json"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    sha = str(payload.get("sha", "")).strip()
+    if not sha:
+        raise RuntimeError("GitHub API lieferte keine Commit-SHA")
+    return sha
+
+
+def refresh_update_status() -> None:
     try:
-        result = subprocess.run(
-            shlex.split(UPDATE_CHECK_COMMAND),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=8,
-            check=False,
-        )
+        current_sha = _read_current_version()
+        latest_sha = _fetch_latest_github_sha()
+        if current_sha and latest_sha.startswith(current_sha):
+            state = "up-to-date"
+            hint = f"Installiert: {current_sha[:7]} / Remote: {latest_sha[:7]}"
+        elif current_sha and latest_sha != current_sha:
+            state = "available"
+            hint = f"Update verfügbar ({current_sha[:7]} → {latest_sha[:7]})"
+        elif not current_sha:
+            state = "unknown"
+            hint = f"Remote Version: {latest_sha[:7]} (lokale VERSION-Datei fehlt)"
+        else:
+            state = "unknown"
+            hint = "Unklarer Versionszustand"
     except Exception as exc:
-        return "unknown", f"Update-Check fehlgeschlagen: {exc}"
+        state = "unknown"
+        hint = f"Update-Check fehlgeschlagen: {exc}"
+        latest_sha = ""
+        current_sha = _read_current_version()
 
-    output = (result.stdout or result.stderr or "").strip()
-    if result.returncode == 0:
-        return "available", output or "Update verfügbar"
-    if result.returncode == 1:
-        return "up-to-date", output or "Kein Update verfügbar"
-    return "unknown", output or f"Unbekannter Exitcode: {result.returncode}"
+    with UPDATE_STATUS_LOCK:
+        UPDATE_STATUS.update(
+            {
+                "state": state,
+                "hint": hint,
+                "last_checked": _format_timestamp(time.time()),
+                "latest_sha": latest_sha,
+                "current_sha": current_sha,
+            }
+        )
+
+
+def get_update_availability() -> Tuple[str, str]:
+    with UPDATE_STATUS_LOCK:
+        state = UPDATE_STATUS.get("state", "unknown")
+        hint = UPDATE_STATUS.get("hint", "Kein Update-Status verfügbar")
+    return state, hint
+
+
+def update_check_worker() -> None:
+    interval = max(60, UPDATE_CHECK_INTERVAL_SECONDS)
+    while True:
+        refresh_update_status()
+        time.sleep(interval)
+
 
 
 def render_config_page(message: str = "", error: bool = False, auth_token: str = "") -> str:
@@ -1219,6 +1295,8 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
     config_action = _path_with_token(WEBHOOK_CONFIG_PATH, auth_token)
     update_action = _path_with_token(WEBHOOK_UPDATE_PATH, auth_token)
     update_state, update_hint = get_update_availability()
+    with UPDATE_STATUS_LOCK:
+        update_checked_at = UPDATE_STATUS.get("last_checked", "")
     update_state_colors = {
         "available": "#d1242f",
         "up-to-date": "#1a7f37",
@@ -1267,6 +1345,7 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
         <span style="display:inline-block;border:1px solid {update_color};color:{update_color};border-radius:999px;padding:0.22rem 0.65rem;font-size:0.85rem;font-weight:600;">{_html_escape(update_state)}</span>
         <span style="color:#57606a;">{_html_escape(update_hint)}</span>
       </div>
+      <div style="color:#57606a;font-size:0.9rem;margin-bottom:0.75rem;">Letzter Check: {_html_escape(update_checked_at or 'noch nicht erfolgt')}</div>
       <form method="post" action="{_html_escape(update_action)}">
         <button type="submit" class="btn secondary">Update starten</button>
         <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(UPDATE_COMMAND or 'nicht konfiguriert')}</code></small>
@@ -1305,14 +1384,20 @@ def save_config_to_env_file(values: Dict[str, str]) -> None:
         lines.append(f'{name}="{escaped}"')
         os.environ[name] = val
 
-    with open(env_file_path, "w", encoding="utf-8") as handle:
-        handle.write("\n".join(lines) + "\n")
+    try:
+        with open(env_file_path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+    except PermissionError as exc:
+        raise PermissionError(
+            f"{exc}. Bitte Datei-Rechte prüfen (z. B. chown root:alarm-gateway {env_file_path} && chmod 0660 {env_file_path})."
+        ) from exc
 
 
 def start_update_command() -> None:
     if not UPDATE_COMMAND.strip():
         raise RuntimeError("UPDATE_COMMAND ist nicht gesetzt")
     subprocess.Popen(shlex.split(UPDATE_COMMAND), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    refresh_update_status()
 
 
 def parse_form_urlencoded(raw_body: bytes) -> Dict[str, str]:
@@ -1691,6 +1776,8 @@ def main() -> None:
     validate_push_target()
     validate_runtime_config()
     state = load_state(STATE_FILE)
+    refresh_update_status()
+    threading.Thread(target=update_check_worker, daemon=True).start()
     health_server = start_health_server()
     webhook_server = start_webhook_server(state)
     next_divera = 0.0
