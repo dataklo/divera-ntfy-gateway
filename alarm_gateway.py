@@ -166,6 +166,9 @@ WEBHOOK_TOKEN = env("WEBHOOK_TOKEN", "")
 WEBHOOK_UI_PATH = env("WEBHOOK_UI_PATH", "/")
 WEBHOOK_CONFIG_PATH = env("WEBHOOK_CONFIG_PATH", "/admin/config")
 WEBHOOK_UPDATE_PATH = env("WEBHOOK_UPDATE_PATH", "/admin/update")
+WEBHOOK_UPDATE_CHECK_PATH = env("WEBHOOK_UPDATE_CHECK_PATH", "/admin/update-check")
+WEBHOOK_REBOOT_PATH = env("WEBHOOK_REBOOT_PATH", "/admin/reboot")
+WEBHOOK_RESTART_SERVICE_PATH = env("WEBHOOK_RESTART_SERVICE_PATH", "/admin/restart-service")
 WEBHOOK_TRIGGER_PATH = env("WEBHOOK_TRIGGER_PATH", "/webhook/trigger")
 WEBHOOK_REPLAY_PROTECTION = env("WEBHOOK_REPLAY_PROTECTION", "false").lower() in ("1", "true", "yes", "on")
 WEBHOOK_MAX_SKEW_SECONDS = int(env("WEBHOOK_MAX_SKEW_SECONDS", "120"))
@@ -187,6 +190,8 @@ CLUSTER_SHARED_TOKEN = env("CLUSTER_SHARED_TOKEN", "")
 AUDIT_LOG_FILE = env("AUDIT_LOG_FILE", "")
 DEFAULT_UPDATE_COMMAND = "sudo /opt/alarm-gateway/scripts/update.sh"
 UPDATE_COMMAND = env("UPDATE_COMMAND", DEFAULT_UPDATE_COMMAND)
+REBOOT_COMMAND = "sudo reboot"
+RESTART_SERVICE_COMMAND = "sudo systemctl restart alarm-gateway"
 UPDATE_CHECK_COMMAND = env("UPDATE_CHECK_COMMAND", "")
 UPDATE_REPO = env("UPDATE_REPO", "dataklo/divera-ntfy-gateway")
 UPDATE_BRANCH = env("UPDATE_BRANCH", "main")
@@ -392,6 +397,15 @@ def validate_runtime_config() -> None:
 
     if WEBHOOK_ENABLED and not WEBHOOK_UPDATE_PATH.startswith("/"):
         raise SystemExit("WEBHOOK_UPDATE_PATH must start with '/'")
+
+    if WEBHOOK_ENABLED and not WEBHOOK_UPDATE_CHECK_PATH.startswith("/"):
+        raise SystemExit("WEBHOOK_UPDATE_CHECK_PATH must start with '/'")
+
+    if WEBHOOK_ENABLED and not WEBHOOK_REBOOT_PATH.startswith("/"):
+        raise SystemExit("WEBHOOK_REBOOT_PATH must start with '/'")
+
+    if WEBHOOK_ENABLED and not WEBHOOK_RESTART_SERVICE_PATH.startswith("/"):
+        raise SystemExit("WEBHOOK_RESTART_SERVICE_PATH must start with '/'")
 
     if HEALTH_ENABLED and not HEALTH_PATH.startswith("/"):
         raise SystemExit("HEALTH_PATH must start with '/'")
@@ -1287,8 +1301,9 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
                 f'<div><label for="cfg_{_html_escape(name)}" style="font-weight:600;display:block;">{_html_escape(label)}</label>'
                 f'<code style="font-size:0.85rem;color:#57606a;">{_html_escape(name)}</code>'
                 f'<div style="margin-top:0.35rem;color:#57606a;font-size:0.9rem;">{_html_escape(help_text)}</div></div>'
-                f'<div>{_render_config_input(name, value)}</div>'
-                f'<div style="color:#57606a;font-size:0.88rem;">{_html_escape(str(default) if default is not None else "")}</div>'
+                f'<div>{_render_config_input(name, value)}'
+                f'<div style="color:#57606a;font-size:0.88rem;margin-top:0.4rem;">default: {_html_escape(str(default) if default is not None else "")}</div>'
+                '</div>'
                 '</div>'
             )
 
@@ -1301,6 +1316,9 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
 
     config_action = _path_with_token(WEBHOOK_CONFIG_PATH, auth_token)
     update_action = _path_with_token(WEBHOOK_UPDATE_PATH, auth_token)
+    update_check_action = _path_with_token(WEBHOOK_UPDATE_CHECK_PATH, auth_token)
+    reboot_action = _path_with_token(WEBHOOK_REBOOT_PATH, auth_token)
+    restart_service_action = _path_with_token(WEBHOOK_RESTART_SERVICE_PATH, auth_token)
     update_state, update_hint = get_update_availability()
     with UPDATE_STATUS_LOCK:
         update_checked_at = UPDATE_STATUS.get("last_checked", "")
@@ -1310,8 +1328,6 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
         "unknown": "#9a6700",
     }
     update_color = update_state_colors.get(update_state, "#9a6700")
-
-    update_command = get_update_command()
 
     return f"""<!doctype html>
 <html lang="de">
@@ -1323,7 +1339,7 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
     body {{ font-family: Inter, Arial, sans-serif; background: #f6f8fa; color: #24292f; margin: 0; }}
     .container {{ max-width: 1180px; margin: 1.2rem auto; padding: 0 1rem 2rem; }}
     .topbar {{ display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; justify-content:space-between; }}
-    .cfg-row {{ display:grid; grid-template-columns: minmax(280px, 2fr) minmax(260px, 3fr) minmax(180px, 2fr); gap:0.9rem; align-items:start; margin-bottom:0.95rem; }}
+    .cfg-row {{ display:grid; grid-template-columns: minmax(280px, 2fr) minmax(260px, 3fr); gap:0.9rem; align-items:start; margin-bottom:0.95rem; }}
     .actions {{ display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin:1rem 0; }}
     .btn {{ background:#1f6feb; color:white; border:none; border-radius:0.45rem; padding:0.65rem 1rem; cursor:pointer; font-weight:600; }}
     .btn.secondary {{ background:#57606a; }}
@@ -1354,10 +1370,25 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
         <span style="color:#57606a;">{_html_escape(update_hint)}</span>
       </div>
       <div style="color:#57606a;font-size:0.9rem;margin-bottom:0.75rem;">Letzter Check: {_html_escape(update_checked_at or 'noch nicht erfolgt')}</div>
+      <form method="post" action="{_html_escape(update_check_action)}" style="margin-bottom:0.75rem;">
+        <button type="submit" class="btn secondary">Auf Updates prüfen</button>
+      </form>
       <form method="post" action="{_html_escape(update_action)}">
         <button type="submit" class="btn secondary">Update starten</button>
-        <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(update_command or 'nicht konfiguriert')}</code></small>
       </form>
+    </section>
+    <section style="margin:1.25rem 0;padding:1rem;border:1px solid #d0d7de;border-radius:0.65rem;background:#fff;">
+      <h2 style="margin:0 0 0.75rem 0;font-size:1.1rem;">System</h2>
+      <div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-start;">
+        <form method="post" action="{_html_escape(restart_service_action)}">
+          <button type="submit" class="btn secondary">alarm-gateway neu starten</button>
+          <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(RESTART_SERVICE_COMMAND)}</code></small>
+        </form>
+        <form method="post" action="{_html_escape(reboot_action)}">
+          <button type="submit" class="btn secondary">Server reboot</button>
+          <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(REBOOT_COMMAND)}</code></small>
+        </form>
+      </div>
     </section>
   </div>
 </body>
@@ -1396,6 +1427,12 @@ def start_update_command() -> None:
         raise RuntimeError("UPDATE_COMMAND ist nicht gesetzt")
     subprocess.Popen(shlex.split(update_command), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     refresh_update_status()
+
+
+def start_system_command(command: str, error_message: str) -> None:
+    if not command.strip():
+        raise RuntimeError(error_message)
+    subprocess.Popen(shlex.split(command), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def parse_form_urlencoded(raw_body: bytes) -> Dict[str, str]:
@@ -1598,6 +1635,75 @@ def make_webhook_handler(state: Dict[str, Any]):
                     self._send_html(
                         200,
                         render_config_page("Update wurde gestartet.", auth_token=self._authorized_token_from_query(query_params)),
+                    )
+                except Exception as exc:
+                    self._send_html(
+                        400,
+                        render_config_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
+                return
+
+            if path_matches(request_path, WEBHOOK_UPDATE_CHECK_PATH):
+                if not _is_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                try:
+                    refresh_update_status()
+                    self._send_html(
+                        200,
+                        render_config_page("Update-Check wurde durchgeführt.", auth_token=self._authorized_token_from_query(query_params)),
+                    )
+                except Exception as exc:
+                    self._send_html(
+                        400,
+                        render_config_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
+                return
+
+            if path_matches(request_path, WEBHOOK_RESTART_SERVICE_PATH):
+                if not _is_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                try:
+                    start_system_command(RESTART_SERVICE_COMMAND, "Restart-Kommando ist nicht gesetzt")
+                    self._send_html(
+                        200,
+                        render_config_page(
+                            "alarm-gateway Neustart wurde ausgelöst.",
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
+                except Exception as exc:
+                    self._send_html(
+                        400,
+                        render_config_page(
+                            f"Fehler: {exc}",
+                            error=True,
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
+                    )
+                return
+
+            if path_matches(request_path, WEBHOOK_REBOOT_PATH):
+                if not _is_authorized(self.headers, query_params):
+                    self._send_json(401, {"error": "unauthorized"})
+                    return
+                try:
+                    start_system_command(REBOOT_COMMAND, "Reboot-Kommando ist nicht gesetzt")
+                    self._send_html(
+                        200,
+                        render_config_page(
+                            "System-Reboot wurde ausgelöst.",
+                            auth_token=self._authorized_token_from_query(query_params),
+                        ),
                     )
                 except Exception as exc:
                     self._send_html(
