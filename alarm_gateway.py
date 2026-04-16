@@ -1099,9 +1099,10 @@ def render_web_form_page(message: str = "", error: bool = False, auth_token: str
     status_html = ""
     if message:
         color = "#b00020" if error else "#0a7f2e"
-        status_html = f'<p style="color:{color};font-weight:600;">{_html_escape(message)}</p>'
+        status_html = f'<div style="border-left:4px solid {color};background:#fff;padding:0.8rem 1rem;margin-bottom:1rem;color:{color};font-weight:600;">{_html_escape(message)}</div>'
 
     config_link = _path_with_token(WEBHOOK_CONFIG_PATH, auth_token)
+    form_action = _path_with_token(WEBHOOK_UI_PATH, auth_token)
 
     return f"""<!doctype html>
 <html lang="de">
@@ -1109,21 +1110,51 @@ def render_web_form_page(message: str = "", error: bool = False, auth_token: str
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Alarm Gateway Webformular</title>
+  <style>
+    body {{ font-family: Inter, Arial, sans-serif; background: #f6f8fa; color: #24292f; margin: 0; }}
+    .container {{ max-width: 1180px; margin: 1.2rem auto; padding: 0 1rem 2rem; }}
+    .topbar {{ display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; justify-content:space-between; margin-bottom:1rem; }}
+    .card {{ margin:1.25rem 0; padding:1rem; border:1px solid #d0d7de; border-radius:0.65rem; background:#fff; }}
+    .form-grid {{ display:grid; gap:0.9rem; }}
+    .field label {{ font-weight:600; display:block; margin-bottom:0.35rem; }}
+    .field input, .field textarea {{ width:100%; padding:0.55rem; border:1px solid #d0d7de; border-radius:0.45rem; box-sizing:border-box; }}
+    .btn {{ background:#1f6feb; color:white; border:none; border-radius:0.45rem; padding:0.65rem 1rem; cursor:pointer; font-weight:600; }}
+  </style>
 </head>
-<body style="font-family:Arial,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;">
-  <div style="display:flex;justify-content:flex-end;margin-bottom:0.8rem;">
-    <a href="{_html_escape(config_link)}" style="text-decoration:none;color:#1f6feb;font-weight:600;">Zur Web-Konfiguration</a>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div>
+        <h1 style="margin:0;">Alarm manuell senden</h1>
+        <p style="margin:0.45rem 0 0 0;color:#57606a;">Felder: Titel, Beschreibung, Adresse, Priorität (1-5).</p>
+      </div>
+      <a href="{_html_escape(config_link)}" style="text-decoration:none;color:#1f6feb;font-weight:600;">Zur Web-Konfiguration</a>
+    </div>
+    <section class="card">
+      {status_html}
+      <form method="post" action="{_html_escape(form_action)}" class="form-grid">
+        <div class="field">
+          <label for="manual-title">Titel*</label>
+          <input id="manual-title" required name="title"/>
+        </div>
+        <div class="field">
+          <label for="manual-text">Beschreibung</label>
+          <textarea id="manual-text" name="text" rows="4"></textarea>
+        </div>
+        <div class="field">
+          <label for="manual-address">Adresse</label>
+          <input id="manual-address" name="address"/>
+        </div>
+        <div class="field">
+          <label for="manual-priority">Priorität (1-5)</label>
+          <input id="manual-priority" name="priority" type="number" min="1" max="5" style="max-width:120px;"/>
+        </div>
+        <div>
+          <button type="submit" class="btn">Alarm senden</button>
+        </div>
+      </form>
+    </section>
   </div>
-  <h1>Alarm manuell senden</h1>
-  <p>Felder: Titel, Beschreibung, Adresse, Priorität (1-5).</p>
-  {status_html}
-  <form method="post" action="{_html_escape(WEBHOOK_UI_PATH)}" style="display:grid;gap:0.75rem;">
-    <label>Titel*<br/><input required name="title" style="width:100%;padding:0.5rem;"/></label>
-    <label>Beschreibung<br/><textarea name="text" rows="4" style="width:100%;padding:0.5rem;"></textarea></label>
-    <label>Adresse<br/><input name="address" style="width:100%;padding:0.5rem;"/></label>
-    <label>Priorität (1-5)<br/><input name="priority" type="number" min="1" max="5" style="width:120px;padding:0.5rem;"/></label>
-    <button type="submit" style="padding:0.6rem 1rem;">Alarm senden</button>
-  </form>
 </body>
 </html>
 """
@@ -1370,10 +1401,10 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
         <span style="color:#57606a;">{_html_escape(update_hint)}</span>
       </div>
       <div style="color:#57606a;font-size:0.9rem;margin-bottom:0.75rem;">Letzter Check: {_html_escape(update_checked_at or 'noch nicht erfolgt')}</div>
-      <form method="post" action="{_html_escape(update_check_action)}" style="margin-bottom:0.75rem;">
+      <form method="post" action="{_html_escape(update_check_action)}" style="display:inline-block;">
         <button type="submit" class="btn secondary">Auf Updates prüfen</button>
       </form>
-      <form method="post" action="{_html_escape(update_action)}">
+      <form method="post" action="{_html_escape(update_action)}" style="display:inline-block;margin-left:0.5rem;">
         <button type="submit" class="btn secondary">Update starten</button>
       </form>
     </section>
@@ -1382,11 +1413,9 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
       <div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-start;">
         <form method="post" action="{_html_escape(restart_service_action)}">
           <button type="submit" class="btn secondary">alarm-gateway neu starten</button>
-          <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(RESTART_SERVICE_COMMAND)}</code></small>
         </form>
         <form method="post" action="{_html_escape(reboot_action)}">
           <button type="submit" class="btn secondary">Server reboot</button>
-          <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(REBOOT_COMMAND)}</code></small>
         </form>
       </div>
     </section>
@@ -1471,6 +1500,13 @@ def _is_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
         return True
 
     return str(query_params.get("token", "")).strip() == WEBHOOK_TOKEN
+
+
+def _is_admin_action_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
+    """Sensitive admin actions always require an explicitly configured token."""
+    if not WEBHOOK_TOKEN:
+        return False
+    return _is_authorized(headers, query_params)
 
 
 def _is_cluster_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
@@ -1669,7 +1705,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                 return
 
             if path_matches(request_path, WEBHOOK_RESTART_SERVICE_PATH):
-                if not _is_authorized(self.headers, query_params):
+                if not _is_admin_action_authorized(self.headers, query_params):
                     self._send_json(401, {"error": "unauthorized"})
                     return
                 try:
@@ -1693,7 +1729,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                 return
 
             if path_matches(request_path, WEBHOOK_REBOOT_PATH):
-                if not _is_authorized(self.headers, query_params):
+                if not _is_admin_action_authorized(self.headers, query_params):
                     self._send_json(401, {"error": "unauthorized"})
                     return
                 try:
