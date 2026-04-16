@@ -1189,17 +1189,38 @@ def _fetch_latest_github_sha() -> str:
     if not repo:
         raise RuntimeError("UPDATE_REPO ist leer")
 
-    response = requests.get(
-        f"https://api.github.com/repos/{repo}/commits/{branch}",
+    def fetch_sha_for_branch(branch_name: str) -> str:
+        response = requests.get(
+            f"https://api.github.com/repos/{repo}/commits/{branch_name}",
+            headers={"Accept": "application/vnd.github+json"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        sha_value = str(payload.get("sha", "")).strip()
+        if not sha_value:
+            raise RuntimeError("GitHub API lieferte keine Commit-SHA")
+        return sha_value
+
+    try:
+        return fetch_sha_for_branch(branch)
+    except requests.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        if response is None or response.status_code != 404:
+            raise
+
+    repo_response = requests.get(
+        f"https://api.github.com/repos/{repo}",
         headers={"Accept": "application/vnd.github+json"},
         timeout=10,
     )
-    response.raise_for_status()
-    payload = response.json()
-    sha = str(payload.get("sha", "")).strip()
-    if not sha:
-        raise RuntimeError("GitHub API lieferte keine Commit-SHA")
-    return sha
+    repo_response.raise_for_status()
+    repo_payload = repo_response.json()
+    default_branch = str(repo_payload.get("default_branch", "")).strip()
+    if not default_branch:
+        raise RuntimeError("GitHub API lieferte keinen Default-Branch")
+
+    return fetch_sha_for_branch(default_branch)
 
 
 def refresh_update_status() -> None:
