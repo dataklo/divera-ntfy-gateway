@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_DIR="/opt/alarm-gateway"
 SERVICE_NAME="alarm-gateway"
-DEFAULT_REPO="procode-its/divera-ntfy-gateway"
+DEFAULT_REPO="dataklo/divera-ntfy-gateway"
 DEFAULT_BRANCH="main"
 
 ENV_FILE="${ALARM_GATEWAY_ENV_FILE:-/etc/alarm-gateway/alarm-gateway.env}"
@@ -20,7 +20,18 @@ VERSION_FILE="$APP_DIR/VERSION"
 ENV_FILE_PATH="${ALARM_GATEWAY_ENV_FILE:-/etc/alarm-gateway/alarm-gateway.env}"
 
 fetch_latest_sha() {
-  curl -fsSL -H 'Accept: application/vnd.github+json' "$API_URL" | python3 -c "import json,sys; print(json.load(sys.stdin).get('sha',''))"
+  local response sha
+  response="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$API_URL" 2>/dev/null || true)"
+  if [[ -z "$response" ]]; then
+    return 1
+  fi
+
+  sha="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read() or '{}').get('sha',''))" <<<"$response" 2>/dev/null || true)"
+  if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$sha"
 }
 
 latest_sha="$(fetch_latest_sha)"
