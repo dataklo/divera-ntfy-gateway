@@ -35,6 +35,12 @@ install -d -m 0755 "$APP_DIR/scripts"
 install -m 0755 "$REPO_ROOT/scripts/update.sh" "$APP_DIR/scripts/update.sh"
 echo "$USER_NAME ALL=(root) NOPASSWD: /opt/alarm-gateway/scripts/update.sh" > /etc/sudoers.d/alarm-gateway-update
 chmod 0440 /etc/sudoers.d/alarm-gateway-update
+cat > /etc/sudoers.d/alarm-gateway-admin <<EOF
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl restart alarm-gateway
+$USER_NAME ALL=(root) NOPASSWD: /usr/sbin/reboot
+$USER_NAME ALL=(root) NOPASSWD: /sbin/reboot
+EOF
+chmod 0440 /etc/sudoers.d/alarm-gateway-admin
 
 echo "[*] Creating python venv + installing requirements..."
 python3 -m venv "$APP_DIR/venv"

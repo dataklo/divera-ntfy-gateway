@@ -17,6 +17,8 @@ systemctl daemon-reload
 
 echo "[*] Removing application directory..."
 rm -rf "$APP_DIR"
+rm -f /etc/sudoers.d/alarm-gateway-update
+rm -f /etc/sudoers.d/alarm-gateway-admin
 
 echo "[*] Removing state directory..."
 rm -rf "$STATE_DIR"

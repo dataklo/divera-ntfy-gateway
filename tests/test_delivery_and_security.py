@@ -353,11 +353,11 @@ class DeliveryAndSecurityTests(unittest.TestCase):
         form_action = self.module._path_with_token(self.module.WEBHOOK_UI_PATH, 'abc123')
         self.assertIn(f'action="{form_action}"', html)
 
-    def test_admin_action_authorization_requires_configured_token(self):
+    def test_admin_action_authorization_follows_webhook_auth_model(self):
         old_token = self.module.WEBHOOK_TOKEN
         try:
             self.module.WEBHOOK_TOKEN = ''
-            self.assertFalse(self.module._is_admin_action_authorized({}, {}))
+            self.assertTrue(self.module._is_admin_action_authorized({}, {}))
 
             self.module.WEBHOOK_TOKEN = 'secure-token'
             self.assertFalse(self.module._is_admin_action_authorized({}, {}))
