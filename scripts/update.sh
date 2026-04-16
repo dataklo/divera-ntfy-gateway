@@ -14,14 +14,28 @@ fi
 
 REPO="${UPDATE_REPO:-$DEFAULT_REPO}"
 BRANCH="${UPDATE_BRANCH:-$DEFAULT_BRANCH}"
-API_URL="https://api.github.com/repos/${REPO}/commits/${BRANCH}"
-ARCHIVE_URL="https://codeload.github.com/${REPO}/tar.gz/${BRANCH}"
 VERSION_FILE="$APP_DIR/VERSION"
 ENV_FILE_PATH="${ALARM_GATEWAY_ENV_FILE:-/etc/alarm-gateway/alarm-gateway.env}"
+SELECTED_BRANCH="$BRANCH"
+
+fetch_default_branch() {
+  local response default_branch
+  response="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${REPO}" 2>/dev/null || true)"
+  if [[ -z "$response" ]]; then
+    return 1
+  fi
+
+  default_branch="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read() or '{}').get('default_branch',''))" <<<"$response" 2>/dev/null || true)"
+  if [[ -z "$default_branch" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$default_branch"
+}
 
 fetch_latest_sha() {
-  local response sha
-  response="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$API_URL" 2>/dev/null || true)"
+  local response sha branch_ref="$1"
+  response="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${REPO}/commits/${branch_ref}" 2>/dev/null || true)"
   if [[ -z "$response" ]]; then
     return 1
   fi
@@ -34,7 +48,14 @@ fetch_latest_sha() {
   printf '%s\n' "$sha"
 }
 
-latest_sha="$(fetch_latest_sha)"
+latest_sha="$(fetch_latest_sha "$BRANCH" || true)"
+if [[ -z "$latest_sha" ]]; then
+  fallback_branch="$(fetch_default_branch || true)"
+  if [[ -n "$fallback_branch" && "$fallback_branch" != "$BRANCH" ]]; then
+    SELECTED_BRANCH="$fallback_branch"
+    latest_sha="$(fetch_latest_sha "$SELECTED_BRANCH" || true)"
+  fi
+fi
 if [[ -z "$latest_sha" ]]; then
   echo "[!] Konnte keine aktuelle SHA von GitHub lesen (${REPO}@${BRANCH})."
   exit 1
@@ -70,8 +91,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[*] Lade ${REPO}@${BRANCH} ..."
-curl -fsSL "$ARCHIVE_URL" -o "$tmp_dir/source.tar.gz"
+echo "[*] Lade ${REPO}@${SELECTED_BRANCH} ..."
+curl -fsSL "https://codeload.github.com/${REPO}/tar.gz/${SELECTED_BRANCH}" -o "$tmp_dir/source.tar.gz"
 tar -xzf "$tmp_dir/source.tar.gz" -C "$tmp_dir"
 
 src_dir="$(find "$tmp_dir" -maxdepth 1 -mindepth 1 -type d -name '*-*' | head -n 1)"

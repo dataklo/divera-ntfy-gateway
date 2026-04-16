@@ -234,6 +234,79 @@ class DeliveryAndSecurityTests(unittest.TestCase):
             self.module._fetch_latest_github_sha = old_fetch
             self.module._read_current_version = old_read
 
+    def test_fetch_latest_github_sha_falls_back_to_default_branch(self):
+        module_ref = self.module
+
+        class DummyResponse:
+            def __init__(self, status_code=200, payload=None):
+                self.status_code = status_code
+                self._payload = payload or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    err = module_ref.requests.HTTPError(f"HTTP {self.status_code}")
+                    err.response = self
+                    raise err
+
+            def json(self):
+                return self._payload
+
+        calls = []
+        old_get = self.module.requests.get
+        old_repo = self.module.UPDATE_REPO
+        old_branch = self.module.UPDATE_BRANCH
+        try:
+            self.module.UPDATE_REPO = 'owner/repo'
+            self.module.UPDATE_BRANCH = 'main'
+
+            def fake_get(url, **kwargs):
+                calls.append(url)
+                if url.endswith('/commits/main'):
+                    return DummyResponse(status_code=404)
+                if url.endswith('/repos/owner/repo'):
+                    return DummyResponse(payload={'default_branch': 'master'})
+                if url.endswith('/commits/master'):
+                    return DummyResponse(payload={'sha': 'a' * 40})
+                raise AssertionError(f'unexpected url: {url}')
+
+            self.module.requests.get = fake_get
+            sha = self.module._fetch_latest_github_sha()
+        finally:
+            self.module.requests.get = old_get
+            self.module.UPDATE_REPO = old_repo
+            self.module.UPDATE_BRANCH = old_branch
+
+        self.assertEqual(sha, 'a' * 40)
+        self.assertIn('https://api.github.com/repos/owner/repo/commits/main', calls)
+        self.assertIn('https://api.github.com/repos/owner/repo', calls)
+        self.assertIn('https://api.github.com/repos/owner/repo/commits/master', calls)
+
+    def test_fetch_latest_github_sha_reraises_non_404_error(self):
+        module_ref = self.module
+
+        class DummyResponse:
+            def __init__(self, status_code=500):
+                self.status_code = status_code
+
+            def raise_for_status(self):
+                err = module_ref.requests.HTTPError(f"HTTP {self.status_code}")
+                err.response = self
+                raise err
+
+        old_get = self.module.requests.get
+        old_repo = self.module.UPDATE_REPO
+        old_branch = self.module.UPDATE_BRANCH
+        try:
+            self.module.UPDATE_REPO = 'owner/repo'
+            self.module.UPDATE_BRANCH = 'main'
+            self.module.requests.get = lambda *args, **kwargs: DummyResponse(status_code=500)
+            with self.assertRaises(self.module.requests.HTTPError):
+                self.module._fetch_latest_github_sha()
+        finally:
+            self.module.requests.get = old_get
+            self.module.UPDATE_REPO = old_repo
+            self.module.UPDATE_BRANCH = old_branch
+
     def test_render_config_page_shows_update_status(self):
         old_get_update = self.module.get_update_availability
         try:
