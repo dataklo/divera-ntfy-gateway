@@ -195,6 +195,45 @@ class DeliveryAndSecurityTests(unittest.TestCase):
     def test_path_matches_rejects_different_path(self):
         self.assertFalse(self.module.path_matches('/admin/configuration', '/admin/config'))
 
+    def test_admin_action_authorized_requires_non_empty_webhook_token(self):
+        old_token = self.module.WEBHOOK_TOKEN
+        try:
+            self.module.WEBHOOK_TOKEN = ''
+            self.assertFalse(self.module._is_admin_action_authorized({}, {}))
+        finally:
+            self.module.WEBHOOK_TOKEN = old_token
+
+    def test_admin_action_authorized_accepts_valid_bearer_token(self):
+        old_token = self.module.WEBHOOK_TOKEN
+        try:
+            self.module.WEBHOOK_TOKEN = 'secret-token'
+            self.assertTrue(
+                self.module._is_admin_action_authorized(
+                    {'Authorization': 'Bearer secret-token'},
+                    {},
+                )
+            )
+        finally:
+            self.module.WEBHOOK_TOKEN = old_token
+
+    def test_authorized_token_accepts_query_token(self):
+        old_token = self.module.WEBHOOK_TOKEN
+        try:
+            self.module.WEBHOOK_TOKEN = 'secret-token'
+            token = self.module._authorized_token({}, {'token': 'secret-token'})
+            self.assertEqual(token, 'secret-token')
+        finally:
+            self.module.WEBHOOK_TOKEN = old_token
+
+    def test_authorized_token_accepts_bearer_token(self):
+        old_token = self.module.WEBHOOK_TOKEN
+        try:
+            self.module.WEBHOOK_TOKEN = 'secret-token'
+            token = self.module._authorized_token({'Authorization': 'Bearer secret-token'}, {})
+            self.assertEqual(token, 'secret-token')
+        finally:
+            self.module.WEBHOOK_TOKEN = old_token
+
     def test_get_update_availability_reads_cached_state(self):
         old_status = dict(self.module.UPDATE_STATUS)
         old_lock = self.module.UPDATE_STATUS_LOCK
@@ -324,8 +363,16 @@ class DeliveryAndSecurityTests(unittest.TestCase):
 
         self.assertIn('action="/admin/config?token=abc123"', html)
         self.assertIn('action="/admin/update?token=abc123"', html)
+        self.assertIn('class="update-actions"', html)
         self.assertIn('id="cfg-search"', html)
         self.assertIn('DiVeRa API', html)
+
+    def test_render_config_page_hides_restart_and_reboot_commands(self):
+        html = self.module.render_config_page(auth_token='abc123')
+
+        self.assertNotIn('Command:', html)
+        self.assertNotIn('sudo systemctl restart alarm-gateway', html)
+        self.assertNotIn('sudo reboot', html)
 
     def test_render_web_form_page_includes_config_link(self):
         html = self.module.render_web_form_page()
@@ -334,6 +381,8 @@ class DeliveryAndSecurityTests(unittest.TestCase):
     def test_render_web_form_page_persists_query_token_in_config_link(self):
         html = self.module.render_web_form_page(auth_token='abc123')
         self.assertIn('href="/admin/config?token=abc123"', html)
+        self.assertIn(f'action="{self.module.WEBHOOK_UI_PATH}?token=abc123"', html)
+        self.assertIn('class="container"', html)
 
 
 

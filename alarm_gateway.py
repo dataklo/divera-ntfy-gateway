@@ -1099,9 +1099,10 @@ def render_web_form_page(message: str = "", error: bool = False, auth_token: str
     status_html = ""
     if message:
         color = "#b00020" if error else "#0a7f2e"
-        status_html = f'<p style="color:{color};font-weight:600;">{_html_escape(message)}</p>'
+        status_html = f'<div style="border-left:4px solid {color};background:#fff;padding:0.8rem 1rem;margin-bottom:1rem;color:{color};font-weight:600;">{_html_escape(message)}</div>'
 
     config_link = _path_with_token(WEBHOOK_CONFIG_PATH, auth_token)
+    ui_action = _path_with_token(WEBHOOK_UI_PATH, auth_token)
 
     return f"""<!doctype html>
 <html lang="de">
@@ -1109,21 +1110,37 @@ def render_web_form_page(message: str = "", error: bool = False, auth_token: str
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Alarm Gateway Webformular</title>
+  <style>
+    body {{ font-family: Inter, Arial, sans-serif; background: #f6f8fa; color: #24292f; margin: 0; }}
+    .container {{ max-width: 1180px; margin: 1.2rem auto; padding: 0 1rem 2rem; }}
+    .topbar {{ display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; justify-content:space-between; margin-bottom:1rem; }}
+    .card {{ margin:1.25rem 0; padding:1rem; border:1px solid #d0d7de; border-radius:0.65rem; background:#fff; }}
+    .form-grid {{ display:grid; gap:0.75rem; }}
+    .input {{ width:100%; padding:0.55rem; border:1px solid #d0d7de; border-radius:0.45rem; box-sizing:border-box; }}
+    .btn {{ background:#1f6feb; color:white; border:none; border-radius:0.45rem; padding:0.65rem 1rem; cursor:pointer; font-weight:600; }}
+    .help {{ margin:0.45rem 0 0 0; color:#57606a; }}
+  </style>
 </head>
-<body style="font-family:Arial,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;">
-  <div style="display:flex;justify-content:flex-end;margin-bottom:0.8rem;">
-    <a href="{_html_escape(config_link)}" style="text-decoration:none;color:#1f6feb;font-weight:600;">Zur Web-Konfiguration</a>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div>
+        <h1 style="margin:0;">Alarm manuell senden</h1>
+        <p class="help">Felder: Titel, Beschreibung, Adresse, Priorität (1-5).</p>
+      </div>
+      <a href="{_html_escape(config_link)}" style="text-decoration:none;color:#1f6feb;font-weight:600;">Zur Web-Konfiguration</a>
+    </div>
+    {status_html}
+    <section class="card">
+      <form method="post" action="{_html_escape(ui_action)}" class="form-grid">
+        <label>Titel*<br/><input required name="title" class="input"/></label>
+        <label>Beschreibung<br/><textarea name="text" rows="4" class="input"></textarea></label>
+        <label>Adresse<br/><input name="address" class="input"/></label>
+        <label>Priorität (1-5)<br/><input name="priority" type="number" min="1" max="5" class="input" style="max-width:120px;"/></label>
+        <button type="submit" class="btn">Alarm senden</button>
+      </form>
+    </section>
   </div>
-  <h1>Alarm manuell senden</h1>
-  <p>Felder: Titel, Beschreibung, Adresse, Priorität (1-5).</p>
-  {status_html}
-  <form method="post" action="{_html_escape(WEBHOOK_UI_PATH)}" style="display:grid;gap:0.75rem;">
-    <label>Titel*<br/><input required name="title" style="width:100%;padding:0.5rem;"/></label>
-    <label>Beschreibung<br/><textarea name="text" rows="4" style="width:100%;padding:0.5rem;"></textarea></label>
-    <label>Adresse<br/><input name="address" style="width:100%;padding:0.5rem;"/></label>
-    <label>Priorität (1-5)<br/><input name="priority" type="number" min="1" max="5" style="width:120px;padding:0.5rem;"/></label>
-    <button type="submit" style="padding:0.6rem 1rem;">Alarm senden</button>
-  </form>
 </body>
 </html>
 """
@@ -1341,6 +1358,7 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
     .topbar {{ display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; justify-content:space-between; }}
     .cfg-row {{ display:grid; grid-template-columns: minmax(280px, 2fr) minmax(260px, 3fr); gap:0.9rem; align-items:start; margin-bottom:0.95rem; }}
     .actions {{ display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin:1rem 0; }}
+    .update-actions {{ display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; }}
     .btn {{ background:#1f6feb; color:white; border:none; border-radius:0.45rem; padding:0.65rem 1rem; cursor:pointer; font-weight:600; }}
     .btn.secondary {{ background:#57606a; }}
     @media (max-width: 960px) {{ .cfg-row {{ grid-template-columns: 1fr; }} }}
@@ -1370,23 +1388,23 @@ def render_config_page(message: str = "", error: bool = False, auth_token: str =
         <span style="color:#57606a;">{_html_escape(update_hint)}</span>
       </div>
       <div style="color:#57606a;font-size:0.9rem;margin-bottom:0.75rem;">Letzter Check: {_html_escape(update_checked_at or 'noch nicht erfolgt')}</div>
-      <form method="post" action="{_html_escape(update_check_action)}" style="margin-bottom:0.75rem;">
-        <button type="submit" class="btn secondary">Auf Updates prüfen</button>
-      </form>
-      <form method="post" action="{_html_escape(update_action)}">
-        <button type="submit" class="btn secondary">Update starten</button>
-      </form>
+      <div class="update-actions">
+        <form method="post" action="{_html_escape(update_check_action)}">
+          <button type="submit" class="btn secondary">Auf Updates prüfen</button>
+        </form>
+        <form method="post" action="{_html_escape(update_action)}">
+          <button type="submit" class="btn secondary">Update starten</button>
+        </form>
+      </div>
     </section>
     <section style="margin:1.25rem 0;padding:1rem;border:1px solid #d0d7de;border-radius:0.65rem;background:#fff;">
       <h2 style="margin:0 0 0.75rem 0;font-size:1.1rem;">System</h2>
       <div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-start;">
         <form method="post" action="{_html_escape(restart_service_action)}">
           <button type="submit" class="btn secondary">alarm-gateway neu starten</button>
-          <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(RESTART_SERVICE_COMMAND)}</code></small>
         </form>
         <form method="post" action="{_html_escape(reboot_action)}">
           <button type="submit" class="btn secondary">Server reboot</button>
-          <small style="display:block;color:#57606a;margin-top:0.5rem;">Command: <code>{_html_escape(REBOOT_COMMAND)}</code></small>
         </form>
       </div>
     </section>
@@ -1465,12 +1483,35 @@ def _is_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
     if not WEBHOOK_TOKEN:
         return True
 
-    auth = headers.get("Authorization", "")
-    expected = f"Bearer {WEBHOOK_TOKEN}"
-    if auth.strip() == expected:
+    bearer_token = _extract_bearer_token(headers)
+    if bearer_token == WEBHOOK_TOKEN:
         return True
 
     return str(query_params.get("token", "")).strip() == WEBHOOK_TOKEN
+
+
+def _extract_bearer_token(headers: Any) -> str:
+    auth = str(headers.get("Authorization", "")).strip()
+    if not auth.startswith("Bearer "):
+        return ""
+    return auth[len("Bearer ") :].strip()
+
+
+def _authorized_token(headers: Any, query_params: Dict[str, str]) -> str:
+    candidate = str(query_params.get("token", "")).strip()
+    if WEBHOOK_TOKEN and candidate == WEBHOOK_TOKEN:
+        return candidate
+
+    bearer_token = _extract_bearer_token(headers)
+    if WEBHOOK_TOKEN and bearer_token == WEBHOOK_TOKEN:
+        return bearer_token
+    return ""
+
+
+def _is_admin_action_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
+    if not WEBHOOK_TOKEN:
+        return False
+    return _is_authorized(headers, query_params)
 
 
 def _is_cluster_authorized(headers: Any, query_params: Dict[str, str]) -> bool:
@@ -1500,24 +1541,21 @@ def make_webhook_handler(state: Dict[str, Any]):
             self.end_headers()
             self.wfile.write(encoded)
 
-        def _authorized_token_from_query(self, query_params: Dict[str, str]) -> str:
-            candidate = str(query_params.get("token", "")).strip()
-            if WEBHOOK_TOKEN and candidate == WEBHOOK_TOKEN:
-                return candidate
-            return ""
+        def _authorized_token_from_request(self, query_params: Dict[str, str]) -> str:
+            return _authorized_token(self.headers, query_params)
 
         def do_GET(self) -> None:  # noqa: N802
             request_path, query_params = parse_query_params(self.path)
 
             if path_matches(request_path, WEBHOOK_UI_PATH):
-                self._send_html(200, render_web_form_page(auth_token=self._authorized_token_from_query(query_params)))
+                self._send_html(200, render_web_form_page(auth_token=self._authorized_token_from_request(query_params)))
                 return
 
             if path_matches(request_path, WEBHOOK_CONFIG_PATH):
                 if not _is_authorized(self.headers, query_params):
                     self._send_json(401, {"error": "unauthorized"})
                     return
-                self._send_html(200, render_config_page(auth_token=self._authorized_token_from_query(query_params)))
+                self._send_html(200, render_config_page(auth_token=self._authorized_token_from_request(query_params)))
                 return
 
             if path_matches(request_path, WEBHOOK_TRIGGER_PATH):
@@ -1577,7 +1615,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                         200,
                         render_web_form_page(
                             "Alarm wurde gesendet.",
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 except Exception as exc:
@@ -1587,7 +1625,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                         render_web_form_page(
                             f"Fehler: {exc}",
                             error=True,
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 return
@@ -1612,7 +1650,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                         200,
                         render_config_page(
                             "Konfiguration gespeichert. Neustart empfohlen.",
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 except Exception as exc:
@@ -1621,7 +1659,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                         render_config_page(
                             f"Fehler: {exc}",
                             error=True,
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 return
@@ -1634,7 +1672,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                     start_update_command()
                     self._send_html(
                         200,
-                        render_config_page("Update wurde gestartet.", auth_token=self._authorized_token_from_query(query_params)),
+                        render_config_page("Update wurde gestartet.", auth_token=self._authorized_token_from_request(query_params)),
                     )
                 except Exception as exc:
                     self._send_html(
@@ -1642,7 +1680,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                         render_config_page(
                             f"Fehler: {exc}",
                             error=True,
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 return
@@ -1655,7 +1693,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                     refresh_update_status()
                     self._send_html(
                         200,
-                        render_config_page("Update-Check wurde durchgeführt.", auth_token=self._authorized_token_from_query(query_params)),
+                        render_config_page("Update-Check wurde durchgeführt.", auth_token=self._authorized_token_from_request(query_params)),
                     )
                 except Exception as exc:
                     self._send_html(
@@ -1663,13 +1701,13 @@ def make_webhook_handler(state: Dict[str, Any]):
                         render_config_page(
                             f"Fehler: {exc}",
                             error=True,
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 return
 
             if path_matches(request_path, WEBHOOK_RESTART_SERVICE_PATH):
-                if not _is_authorized(self.headers, query_params):
+                if not _is_admin_action_authorized(self.headers, query_params):
                     self._send_json(401, {"error": "unauthorized"})
                     return
                 try:
@@ -1678,7 +1716,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                         200,
                         render_config_page(
                             "alarm-gateway Neustart wurde ausgelöst.",
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 except Exception as exc:
@@ -1687,13 +1725,13 @@ def make_webhook_handler(state: Dict[str, Any]):
                         render_config_page(
                             f"Fehler: {exc}",
                             error=True,
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 return
 
             if path_matches(request_path, WEBHOOK_REBOOT_PATH):
-                if not _is_authorized(self.headers, query_params):
+                if not _is_admin_action_authorized(self.headers, query_params):
                     self._send_json(401, {"error": "unauthorized"})
                     return
                 try:
@@ -1702,7 +1740,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                         200,
                         render_config_page(
                             "System-Reboot wurde ausgelöst.",
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 except Exception as exc:
@@ -1711,7 +1749,7 @@ def make_webhook_handler(state: Dict[str, Any]):
                         render_config_page(
                             f"Fehler: {exc}",
                             error=True,
-                            auth_token=self._authorized_token_from_query(query_params),
+                            auth_token=self._authorized_token_from_request(query_params),
                         ),
                     )
                 return
