@@ -11,6 +11,7 @@ class DeliveryAndSecurityTests(unittest.TestCase):
         os.environ['NTFY_RETRY_ATTEMPTS'] = '1'
         os.environ['WEBHOOK_REPLAY_PROTECTION'] = 'true'
         os.environ['WEBHOOK_HMAC_SECRET'] = 'secret123'
+        os.environ['WEBHOOK_TOKEN'] = 'test-webhook-token'
         import alarm_gateway
         self.module = importlib.reload(alarm_gateway)
 
@@ -194,6 +195,21 @@ class DeliveryAndSecurityTests(unittest.TestCase):
 
     def test_path_matches_rejects_different_path(self):
         self.assertFalse(self.module.path_matches('/admin/configuration', '/admin/config'))
+
+    def test_resolved_auth_token_accepts_valid_query_token(self):
+        headers = {}
+        query_params = {'token': self.module.WEBHOOK_TOKEN}
+        self.assertEqual(self.module._resolved_auth_token(headers, query_params), self.module.WEBHOOK_TOKEN)
+
+    def test_resolved_auth_token_accepts_valid_bearer_header(self):
+        headers = {'Authorization': f'Bearer {self.module.WEBHOOK_TOKEN}'}
+        query_params = {}
+        self.assertEqual(self.module._resolved_auth_token(headers, query_params), self.module.WEBHOOK_TOKEN)
+
+    def test_resolved_auth_token_rejects_invalid_credentials(self):
+        headers = {'Authorization': 'Bearer wrong-token'}
+        query_params = {'token': 'wrong-token'}
+        self.assertEqual(self.module._resolved_auth_token(headers, query_params), '')
 
     def test_get_update_availability_reads_cached_state(self):
         old_status = dict(self.module.UPDATE_STATUS)
