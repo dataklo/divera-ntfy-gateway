@@ -108,7 +108,7 @@ HEALTH_METRICS_PATH="/metrics"
 
 # Web-Update
 UPDATE_COMMAND="sudo /opt/alarm-gateway/scripts/update.sh"
-UPDATE_REPO="procode-its/divera-ntfy-gateway"
+UPDATE_REPO="dataklo/divera-ntfy-gateway"
 UPDATE_BRANCH="main"
 UPDATE_CHECK_INTERVAL_SECONDS="300"
 EOF

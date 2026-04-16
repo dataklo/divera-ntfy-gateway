@@ -287,7 +287,7 @@ WEBHOOK_TOKEN="<optional-token>"
 WEBHOOK_CONFIG_PATH="/admin/config"
 WEBHOOK_UPDATE_PATH="/admin/update"
 UPDATE_COMMAND="sudo /opt/alarm-gateway/scripts/update.sh"
-UPDATE_REPO="procode-its/divera-ntfy-gateway"
+UPDATE_REPO="dataklo/divera-ntfy-gateway"
 UPDATE_BRANCH="main"
 UPDATE_CHECK_INTERVAL_SECONDS="300"
 DEDUP_RETENTION_HOURS="48"
@@ -352,7 +352,7 @@ Für den Status im Admin-Webinterface gibt es einen automatischen Hintergrund-Ch
 
 ```env
 UPDATE_COMMAND="sudo /opt/alarm-gateway/scripts/update.sh"
-UPDATE_REPO="procode-its/divera-ntfy-gateway"
+UPDATE_REPO="dataklo/divera-ntfy-gateway"
 UPDATE_BRANCH="main"
 UPDATE_CHECK_INTERVAL_SECONDS="300"
 ```
